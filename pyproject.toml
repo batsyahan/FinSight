@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finsight"
+version = "0.1.0"
+description = "FinSight: a multi-agent AI financial analyst that researches a stock, runs quant analysis, flags risks and writes a cited, self-verified investment memo."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Ahan Anil Halsur" }]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+market = ["yfinance>=0.2.40"]
+langgraph = ["langgraph>=0.2"]
+ui = ["streamlit>=1.35"]
+dev = ["pytest>=8"]
+all = ["yfinance>=0.2.40", "langgraph>=0.2", "streamlit>=1.35", "pytest>=8"]
+
+[project.scripts]
+finsight = "finsight.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["finsight*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
