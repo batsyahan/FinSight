@@ -1,0 +1,106 @@
+"""Tool registry. Each tool is a plain Python function with a JSON-ish parameter spec.
+
+Calling a tool through the registry automatically records its output in the evidence
+store, so anything an agent learns from a tool gets a citable id (S1, S2, ...).
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+from finsight.data.providers import MarketDataProvider
+from finsight.state import AnalysisState
+from finsight.tools.quant import fundamental_ratios, price_stats, sma_crossover_backtest
+
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    fn: Callable[..., dict[str, Any] | list[Any]]
+    params: dict[str, str] = field(default_factory=dict)  # name -> description
+    title: str = ""
+
+    def signature(self) -> str:
+        ps = ", ".join(f"{k}: {v}" for k, v in self.params.items()) or "no arguments"
+        return f"- {self.name}({ps}): {self.description}"
+
+
+class ToolRegistry:
+    def __init__(self, state: AnalysisState) -> None:
+        self.state = state
+        self.tools: dict[str, Tool] = {}
+
+    def register(self, tool: Tool) -> None:
+        self.tools[tool.name] = tool
+
+    def subset(self, names: list[str]) -> "ToolRegistry":
+        sub = ToolRegistry(self.state)
+        for n in names:
+            sub.register(self.tools[n])
+        return sub
+
+    def describe(self) -> str:
+        return "\n".join(t.signature() for t in self.tools.values())
+
+    def call(self, name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Run a tool. Returns {"evidence_id", "data"} on success or {"error"} on failure."""
+        if name not in self.tools:
+            return {"error": f"Unknown tool '{name}'. Available: {', '.join(self.tools)}"}
+        tool = self.tools[name]
+        args = {k: v for k, v in (args or {}).items() if k in tool.params}
+        try:
+            out = tool.fn(**args)
+        except Exception as e:  # tools must never crash the agent loop
+            return {"error": f"{type(e).__name__}: {e}"}
+        data = out if isinstance(out, dict) else {"items": out}
+        ev = self.state.evidence.add(source=name, title=tool.title or name, data=data)
+        return {"evidence_id": ev.id, "data": data}
+
+
+def build_tools(provider: MarketDataProvider, state: AnalysisState) -> ToolRegistry:
+    t = state.ticker
+    reg = ToolRegistry(state)
+    cache: dict[str, Any] = {}
+
+    def prices(period: str = "2y"):
+        key = f"prices:{period}"
+        if key not in cache:
+            cache[key] = provider.prices(t, period)
+        return cache[key]
+
+    def fundamentals():
+        if "fund" not in cache:
+            cache["fund"] = provider.fundamentals(t)
+        return cache["fund"]
+
+    reg.register(Tool(
+        "get_company_profile", "Company name, sector, industry, market cap and business summary.",
+        lambda: provider.profile(t), title=f"{t} company profile"))
+    reg.register(Tool(
+        "get_fundamentals", "Latest annual financial statement figures (revenue, profit, debt, cash flow).",
+        fundamentals, title=f"{t} financial statements"))
+    reg.register(Tool(
+        "get_news", "Recent news headlines about the company.",
+        lambda limit=6: provider.news(t, int(limit)), params={"limit": "int, max headlines (default 6)"},
+        title=f"{t} recent news"))
+    reg.register(Tool(
+        "get_price_stats", "Returns, CAGR, volatility, Sharpe ratio and max drawdown from price history.",
+        lambda period="2y": price_stats(prices(period)),
+        params={"period": "one of 6mo, 1y, 2y, 3y, 5y (default 2y)"}, title=f"{t} price statistics"))
+    reg.register(Tool(
+        "run_backtest", "Backtest an SMA crossover strategy versus buy-and-hold.",
+        lambda fast=50, slow=200, period="2y": sma_crossover_backtest(prices(period), int(fast), int(slow)),
+        params={"fast": "int (default 50)", "slow": "int (default 200)", "period": "price period (default 2y)"},
+        title=f"{t} SMA crossover backtest"))
+    reg.register(Tool(
+        "compute_ratios", "Growth, margins, ROE, debt/equity, current ratio and P/E from fundamentals.",
+        lambda: fundamental_ratios(fundamentals()), title=f"{t} fundamental ratios"))
+    return reg
+
+
+def to_json(obj: Any, limit: int = 2500) -> str:
+    s = json.dumps(obj, default=str)
+    return s if len(s) <= limit else s[:limit] + "...(truncated)"
