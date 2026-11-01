@@ -75,6 +75,14 @@ _DASHES = str.maketrans({"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": 
                          "\u2212": "-", "\u00a0": " ", "\u202f": " "})
 
 
+def _claim(i: int, sentence: str, cites: list[str], figures: list[dict[str, Any]], outcome: str,
+           explanation: str) -> dict[str, Any]:
+    """One checkable claim: a memo sentence with its citations and per-figure results."""
+    kind = "quantitative" if figures else "qualitative"
+    return {"id": f"C{i + 1}", "text": CITE_RE.sub("", sentence).strip(" -*")[:400], "type": kind,
+            "citations": cites, "figures": figures, "outcome": outcome, "explanation": explanation}
+
+
 def verify_memo(memo: str, evidence: EvidenceStore) -> dict[str, Any]:
     issues: list[str] = []
     memo = memo.translate(_DASHES)  # models often emit non-breaking hyphens ("52\u2011week") and minus signs
@@ -91,8 +99,10 @@ def verify_memo(memo: str, evidence: EvidenceStore) -> dict[str, Any]:
                 issues.append(f"Citation [{cid}] does not match any evidence item.")
 
     checked = unsupported = uncited = 0
+    claims: list[dict[str, Any]] = []
     for sent in split_sentences(body):
         text_wo_cites = CITE_RE.sub("", sent)
+        sent_ids_all = [c for grp in CITE_RE.findall(sent) for c in re.split(r"\s*,\s*", grp)]
         nums = []
         for m in NUM_RE.finditer(text_wo_cites):
             tok = m.group(0)
@@ -106,8 +116,14 @@ def verify_memo(memo: str, evidence: EvidenceStore) -> dict[str, Any]:
             decimals = len(tok.split(".")[1]) if "." in tok else 0
             nums.append((tok, v, UNIT_SCALES[unit.group(1).lower()] if unit else 1.0, decimals))
         if not nums:
+            if sent_ids_all:  # qualitative claim with a citation: only the LLM critic can judge it
+                bad = [c for c in sent_ids_all if evidence.get(c) is None]
+                claims.append(_claim(len(claims), sent, sent_ids_all, [],
+                                     "bad_citation" if bad else "qualitative",
+                                     f"cites unknown evidence {', '.join(bad)}" if bad else
+                                     "no figures; cited, reviewed by the LLM critic"))
             continue
-        sent_ids = [c for grp in CITE_RE.findall(sent) for c in re.split(r"\s*,\s*", grp)]
+        sent_ids = sent_ids_all
         scoped = [evidence.get(c) for c in sent_ids if evidence.get(c) is not None]
         if not sent_ids:
             uncited += 1
@@ -115,19 +131,31 @@ def verify_memo(memo: str, evidence: EvidenceStore) -> dict[str, Any]:
         # Citation-scoped grounding: a figure must appear in the evidence its own sentence cites.
         # (Matching against all evidence lets random figures pass by coincidence as evidence grows.)
         scope_numbers = [n for ev in scoped for n in ev.numbers()] if scoped else ev_numbers
+        figures: list[dict[str, Any]] = []
         for tok, v, scale, decimals in nums:
             checked += 1
             if number_supported(v, scope_numbers, scale=scale, decimals=decimals):
+                figures.append({"figure": tok, "supported": True})
                 continue
             unsupported += 1
             elsewhere = [ev.id for ev in evidence.items.values()
                          if number_supported(v, ev.numbers(), scale=scale, decimals=decimals)]
             if scoped and elsewhere:
-                issues.append(f"Figure {tok} in \"{sent[:100]}\" is not in the cited evidence "
-                              f"[{', '.join(e.id for e in scoped)}]; it appears in [{', '.join(elsewhere[:3])}]. "
-                              "Fix the citation.")
+                why = (f"not in the cited evidence [{', '.join(e.id for e in scoped)}]; "
+                       f"it appears in [{', '.join(elsewhere[:3])}]")
+                issues.append(f"Figure {tok} in \"{sent[:100]}\" is {why}. Fix the citation.")
             else:
-                issues.append(f"Figure {tok} in \"{sent[:100]}\" is not supported by any evidence.")
+                why = "not supported by any evidence"
+                issues.append(f"Figure {tok} in \"{sent[:100]}\" is {why}.")
+            figures.append({"figure": tok, "supported": False, "reason": why})
+        failed = [f for f in figures if not f["supported"]]
+        if not sent_ids:
+            outcome, why = "uncited", "contains figures but no citation"
+        elif failed:
+            outcome, why = "unsupported", "; ".join(f"{f['figure']}: {f['reason']}" for f in failed)
+        else:
+            outcome, why = "verified", "every figure found in the cited evidence"
+        claims.append(_claim(len(claims), sent, sent_ids, figures, outcome, why))
 
     # currency sanity: a currency used in the memo must be one the evidence actually reports
     ev_currencies = {str(v).upper() for ev in evidence.items.values()
@@ -151,7 +179,10 @@ def verify_memo(memo: str, evidence: EvidenceStore) -> dict[str, Any]:
     return {
         "passed": not uniq,
         "issues": uniq,
+        "claims": claims,
         "stats": {
+            "claims": len(claims),
+            "claims_verified": sum(c["outcome"] == "verified" for c in claims),
             "numbers_checked": checked,
             "unsupported_numbers": unsupported,
             "uncited_sentences": uncited,

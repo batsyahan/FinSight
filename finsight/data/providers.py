@@ -97,6 +97,11 @@ class SampleProvider:
         shares = float(rng.uniform(2e8, 5e9))
         price = float(self.prices(ticker).iloc[-1])
         eps = net_income / shares
+        gross = revenue * float(rng.uniform(0.25, 0.6))
+        op_income = revenue * max(margin * 1.35, float(rng.uniform(-0.02, 0.05)))
+        total_assets = equity + debt + cur_liab * 0.8
+        cash = cur_assets * float(rng.uniform(0.15, 0.5))
+        payout = float(rng.uniform(0, 0.5)) if eps > 0 else 0.0
         return {
             "fiscal_year": 2026,
             "statement_currency": "INR",
@@ -114,8 +119,33 @@ class SampleProvider:
             "shares_outstanding": round(shares, 0),
             "eps": round(eps, 2),
             "price": round(price, 2),
+            "gross_profit": round(gross, 0),
+            "operating_income": round(op_income, 0),
+            "ebit": round(op_income, 0),
+            "ebitda": round(op_income + revenue * 0.04, 0),
+            "total_assets": round(total_assets, 0),
+            "cash": round(cash, 0),
+            "market_cap": round(price * shares, 0),
+            "book_value_per_share": round(equity / shares, 2),
+            "dividend_per_share": round(eps * payout, 2),
+            "period": "annual (FY2026) statements; price is latest close",
+            "source": "synthetic sample provider",
             "data_note": "SYNTHETIC SAMPLE DATA, not real market data",
         }
+
+    def financial_history(self, ticker: str, years: int = 4) -> list[dict[str, Any]]:
+        f = self.fundamentals(ticker)
+        rng = self._rng(ticker, "history")
+        out, rev, ni = [], f["revenue"], f["net_income"]
+        for i in range(years):
+            out.append({"year": f["fiscal_year"] - i, "revenue": round(rev, 0), "net_income": round(ni, 0),
+                        "operating_income": round(rev * (f["operating_income"] / f["revenue"]), 0),
+                        "free_cash_flow": round(f["free_cash_flow"] * float(rng.uniform(0.6, 1.3)), 0),
+                        "total_debt": round(f["total_debt"] * float(rng.uniform(0.8, 1.2)), 0),
+                        "total_equity": round(f["total_equity"] / (1.08 ** i), 0)})
+            rev = rev / (1 + float(rng.uniform(-0.05, 0.2)))
+            ni = ni / (1 + float(rng.uniform(-0.1, 0.25)))
+        return list(reversed(out))
 
     def news(self, ticker: str, limit: int = 8) -> list[dict[str, Any]]:
         rng = self._rng(ticker, "news")
@@ -234,7 +264,37 @@ class YFinanceProvider:
             "shares_outstanding": info.get("sharesOutstanding"),
             "eps": info.get("trailingEps"),
             "price": info.get("currentPrice") or info.get("regularMarketPrice"),
+            "gross_profit": r(inc, ["Gross Profit"]),
+            "operating_income": r(inc, ["Operating Income", "Total Operating Income As Reported"]),
+            "ebit": r(inc, ["EBIT"]),
+            "ebitda": r(inc, ["EBITDA", "Normalized EBITDA"]),
+            "total_assets": r(bal, ["Total Assets"]),
+            "cash": r(bal, ["Cash And Cash Equivalents", "Cash Cash Equivalents And Short Term Investments"]),
+            "market_cap": info.get("marketCap"),
+            "book_value_per_share": info.get("bookValue"),
+            "dividend_per_share": info.get("dividendRate"),
+            "period": "latest annual statements; price, EPS (trailing 12 months) and market cap are latest quote",
+            "source": "Yahoo Finance via yfinance (third-party)",
         }
+
+    def financial_history(self, ticker: str, years: int = 4) -> list[dict[str, Any]]:
+        t = self._t(ticker)
+        inc, bal, cf = t.financials, t.balance_sheet, t.cashflow
+        if inc is None or inc.empty:
+            return []
+        out = []
+        for col in range(min(years, inc.shape[1])):
+            year = inc.columns[col].year
+            out.append({
+                "year": year,
+                "revenue": self._row(inc, ["Total Revenue", "Operating Revenue"], col),
+                "net_income": self._row(inc, ["Net Income", "Net Income Common Stockholders"], col),
+                "operating_income": self._row(inc, ["Operating Income"], col),
+                "free_cash_flow": self._row(cf, ["Free Cash Flow"], col),
+                "total_debt": self._row(bal, ["Total Debt"], col),
+                "total_equity": self._row(bal, ["Stockholders Equity", "Common Stock Equity"], col),
+            })
+        return list(reversed(out))
 
     def news(self, ticker: str, limit: int = 8) -> list[dict[str, Any]]:
         items = self._t(ticker).news or []

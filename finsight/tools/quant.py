@@ -99,23 +99,88 @@ def _div(a: float | None, b: float | None) -> float | None:
 
 
 def fundamental_ratios(f: dict[str, Any]) -> dict[str, Any]:
+    """Ratios from one provider snapshot. Missing inputs give None (never zero), and ratios that
+    would mix statement and quote currencies are withheld; ``unavailable`` explains each gap."""
     rev, prev = f.get("revenue"), f.get("revenue_prev")
     ni, eq, debt = f.get("net_income"), f.get("total_equity"), f.get("total_debt")
     fcf = f.get("free_cash_flow")
     price, eps = f.get("price"), f.get("eps")
+    same_ccy = (f.get("statement_currency") or "") == (f.get("price_currency") or "")
+    unavailable: dict[str, str] = {}
+
+    def need(name: str, value: Any, *inputs: tuple[str, Any]) -> Any:
+        missing = [k for k, v in inputs if v is None]
+        if missing:
+            unavailable[name] = "missing " + ", ".join(missing)
+            return None
+        return value
+
     growth = _div(rev, prev)
     pe = _div(price, eps) if eps and eps > 0 else None
-    return {
-        "revenue_growth_pct": _pct(growth - 1) if growth is not None else None,
-        "net_margin_pct": _pct(_div(ni, rev)),
-        "fcf_margin_pct": _pct(_div(fcf, rev)),
-        "roe_pct": _pct(_div(ni, eq)) if eq and eq > 0 else None,
-        "debt_to_equity": _r(_div(debt, eq)) if eq and eq > 0 else None,
+    if eps is not None and eps <= 0:
+        unavailable["pe_ratio"] = "not meaningful: trailing EPS is zero or negative"
+    capital_employed = (f.get("total_assets") - f.get("current_liabilities")) \
+        if f.get("total_assets") is not None and f.get("current_liabilities") is not None else None
+    ebit = f.get("ebit") if f.get("ebit") is not None else f.get("operating_income")
+
+    pb = ev_ebitda = None
+    if same_ccy:
+        bvps = f.get("book_value_per_share")
+        pb = _r(_div(price, bvps)) if bvps and bvps > 0 else None
+        if f.get("market_cap") is not None and f.get("ebitda") and f["ebitda"] > 0 and debt is not None:
+            ev = f["market_cap"] + debt - (f.get("cash") or 0)
+            ev_ebitda = _r(ev / f["ebitda"])
+        else:
+            unavailable["ev_to_ebitda"] = "missing market cap, debt or positive EBITDA"
+        if pb is None:
+            unavailable["pb_ratio"] = "missing or non-positive book value per share"
+    else:
+        for k in ("pb_ratio", "ev_to_ebitda"):
+            unavailable[k] = (f"withheld: statements in {f.get('statement_currency')} but price in "
+                              f"{f.get('price_currency')}")
+    dps = f.get("dividend_per_share")
+    out = {
+        "revenue_growth_pct": _pct(growth - 1) if growth is not None else need("revenue_growth_pct", None,
+                                                                              ("revenue", rev), ("prior revenue", prev)),
+        "gross_margin_pct": need("gross_margin_pct", _pct(_div(f.get("gross_profit"), rev)),
+                                 ("gross profit", f.get("gross_profit")), ("revenue", rev)),
+        "operating_margin_pct": need("operating_margin_pct", _pct(_div(f.get("operating_income"), rev)),
+                                     ("operating income", f.get("operating_income")), ("revenue", rev)),
+        "net_margin_pct": need("net_margin_pct", _pct(_div(ni, rev)), ("net income", ni), ("revenue", rev)),
+        "fcf_margin_pct": need("fcf_margin_pct", _pct(_div(fcf, rev)), ("free cash flow", fcf), ("revenue", rev)),
+        "roe_pct": _pct(_div(ni, eq)) if eq and eq > 0 else need("roe_pct", None, ("positive equity", None)),
+        "roce_pct": _pct(_div(ebit, capital_employed)) if ebit is not None and capital_employed and capital_employed > 0
+        else need("roce_pct", None, ("EBIT and capital employed", None)),
+        "debt_to_equity": _r(_div(debt, eq)) if eq and eq > 0 and debt is not None
+        else need("debt_to_equity", None, ("debt and positive equity", None)),
         "current_ratio": _r(_div(f.get("current_assets"), f.get("current_liabilities"))),
         "pe_ratio": _r(pe),
         "pe_basis": "trailing (price / trailing EPS)",
+        "pb_ratio": pb,
+        "ev_to_ebitda": ev_ebitda,
+        "dividend_yield_pct": _pct(_div(dps, price)) if dps is not None and price else None,
         "eps": _r(eps),
+        "free_cash_flow": fcf,
+        "unavailable": unavailable,
     }
+    return out
+
+
+FORMULAS = {
+    "revenue_growth_pct": "(revenue / prior-year revenue - 1) x 100, annual statements",
+    "gross_margin_pct": "gross profit / revenue x 100",
+    "operating_margin_pct": "operating income / revenue x 100",
+    "net_margin_pct": "net income / revenue x 100",
+    "fcf_margin_pct": "free cash flow / revenue x 100",
+    "roe_pct": "net income / shareholders' equity x 100 (year-end equity)",
+    "roce_pct": "EBIT / (total assets - current liabilities) x 100",
+    "debt_to_equity": "total debt / shareholders' equity",
+    "current_ratio": "current assets / current liabilities",
+    "pe_ratio": "latest price / trailing 12-month EPS",
+    "pb_ratio": "latest price / book value per share (same currency only)",
+    "ev_to_ebitda": "(market cap + debt - cash) / EBITDA (same currency only)",
+    "dividend_yield_pct": "annual dividend per share / latest price x 100",
+}
 
 
 def max_drawdown(prices: pd.Series) -> float:

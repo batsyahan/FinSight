@@ -17,7 +17,8 @@ from typing import Any, Callable
 
 import pandas as pd
 
-TTL_SECONDS = {"prices": 6 * 3600, "fundamentals": 24 * 3600, "profile": 24 * 3600, "news": 3600}
+TTL_SECONDS = {"prices": 6 * 3600, "fundamentals": 24 * 3600, "profile": 24 * 3600, "news": 3600,
+               "history": 24 * 3600}
 
 
 def _encode(value: Any) -> str:
@@ -118,3 +119,6 @@ class CachedProvider:
 
     def news(self, ticker: str, limit: int = 8) -> list[dict[str, Any]]:
         return self._cached("news", f"{ticker}:{limit}", lambda: self.inner.news(ticker, limit))
+
+    def financial_history(self, ticker: str, years: int = 4) -> list[dict[str, Any]]:
+        return self._cached("history", f"{ticker}:{years}", lambda: self.inner.financial_history(ticker, years))

@@ -27,7 +27,7 @@ def test_markdown_export_is_the_memo():
 
 
 def test_pdf_export():
-    pytest.importorskip("fpdf")
+    pytest.importorskip("reportlab")
     state = run_analysis("DEMO", settings=OFFLINE, engine_name="builtin")
     state.memo += "\nUnicode check: 52‑week, ₹1,185, −3.2% [S1]."
     content, ext = export(state, "pdf")

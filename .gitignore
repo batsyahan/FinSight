@@ -11,3 +11,4 @@ venv/
 reports/
 .DS_Store
 .finsight_cache/
+.finsight/

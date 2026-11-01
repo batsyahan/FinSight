@@ -2,7 +2,7 @@
 
 The memo is model-written text, so it is HTML-escaped first and then converted with a small,
 safe Markdown subset (headings, bold, bullets, paragraphs). Nothing in a memo can inject markup.
-PDF export uses fpdf2 (pip install "finsight[pdf]").
+PDF export uses ReportLab (pip install "finsight[pdf]").
 """
 
 from __future__ import annotations
@@ -92,54 +92,68 @@ def to_html(state: AnalysisState) -> str:
 </body></html>"""
 
 
-def to_pdf(state: AnalysisState) -> bytes:
+def to_pdf(state: AnalysisState, verification: dict | None = None) -> bytes:
+    """Memo, Critic verification report and evidence list as a PDF (ReportLab)."""
     try:
-        from fpdf import FPDF
-        from fpdf.enums import XPos, YPos
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     except ImportError as e:  # pragma: no cover
-        raise RuntimeError('PDF export needs fpdf2: pip install "finsight[pdf]"') from e
+        raise RuntimeError('PDF export needs reportlab: pip install "finsight[pdf]"') from e
+    import io
 
-    def clean(s: str) -> str:  # core PDF fonts are Latin-1; map common Unicode punctuation
-        table = {"‑": "-", "‐": "-", "–": "-", "—": "-", "−": "-", "’": "'",
-                 "‘": "'", "“": '"', "”": '"', "…": "...", "₹": "INR ", "→": "->",
-                 " ": " ", "•": "-"}
-        s = "".join(table.get(ch, ch) for ch in s)
-        return s.encode("latin-1", "replace").decode("latin-1")
+    from finsight.verify import verify_memo
 
-    pdf = FPDF(format="A4")
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
+    verification = verification or verify_memo(state.memo, state.evidence)
+    ss = getSampleStyleSheet()
+    lime = colors.HexColor("#6C8F1F")
+    h1 = ParagraphStyle("h1", parent=ss["Heading1"], fontSize=17, spaceAfter=6)
+    h2 = ParagraphStyle("h2", parent=ss["Heading2"], fontSize=12.5, textColor=lime, spaceBefore=10, spaceAfter=4)
+    body = ParagraphStyle("b", parent=ss["BodyText"], fontSize=9.5, leading=13)
+    small = ParagraphStyle("s", parent=body, fontSize=7.5, leading=10, textColor=colors.HexColor("#555555"))
 
-    def write(h: float, text: str) -> None:
-        # fpdf2 leaves the cursor at the right margin after multi_cell by default; return to the left
-        pdf.multi_cell(0, h, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    def para(text: str, style: ParagraphStyle = body) -> Paragraph:
+        safe = html.escape(text)
+        safe = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe)
+        return Paragraph(safe, style)
 
-    pdf.set_font("Helvetica", size=9)
-    pdf.set_text_color(110, 110, 110)
-    write(5, clean(f"FinSight research memo - {'approved' if state.approved else 'not approved'} "
-                               f"by the Critic - educational research, not financial advice"))
-    pdf.set_text_color(0, 0, 0)
+    story = [para(f"FinSight research memo · {'approved' if state.approved else 'NOT approved'} by the Critic · "
+                  f"{state.revisions} revision(s) · educational research, not financial advice", small), Spacer(1, 4)]
     for raw in state.memo.splitlines():
-        line = clean(raw.rstrip())
+        line = raw.rstrip()
         if not line.strip():
-            pdf.ln(2)
             continue
         head = re.match(r"^(#{1,3})\s+(.*)$", line)
-        text = re.sub(r"\*\*(.+?)\*\*", r"\1", head.group(2) if head else line)
         if head:
-            pdf.ln(2)
-            pdf.set_font("Helvetica", "B", {1: 16, 2: 13, 3: 11}[len(head.group(1))])
+            story.append(para(head.group(2), h1 if len(head.group(1)) == 1 else h2))
+        elif re.match(r"^\s*[-*]\s+", line):
+            story.append(para("• " + re.sub(r"^\s*[-*]\s+", "", line)))
         else:
-            pdf.set_font("Helvetica", size=10)
-            text = re.sub(r"^\s*[-*]\s+", "- ", text)
-        write(6 if head else 5, text)
-    pdf.ln(4)
-    pdf.set_font("Helvetica", "B", 11)
-    write(6, "Evidence")
-    pdf.set_font("Helvetica", size=8)
-    for e in state.evidence.items.values():
-        write(4, clean(f"[{e.id}] {e.title} ({e.source})"))
-    return bytes(pdf.output())
+            story.append(para(line))
+
+    story += [Spacer(1, 8), para("Critic verification report", h2),
+              para(f"{verification['stats'].get('claims_verified', 0)} of {verification['stats'].get('claims', 0)} "
+                   f"claims verified against cited evidence; {verification['stats'].get('unsupported_numbers', 0)} "
+                   f"unsupported figure(s).", small)]
+    rows = [["Claim", "Outcome", "Cites", "Explanation"]]
+    for c in verification.get("claims", [])[:60]:
+        rows.append([Paragraph(html.escape(c["text"][:160]), small), c["outcome"], ", ".join(c["citations"]),
+                     Paragraph(html.escape(c["explanation"][:140]), small)])
+    if len(rows) > 1:
+        tbl = Table(rows, colWidths=[78 * mm, 22 * mm, 18 * mm, 52 * mm], repeatRows=1)
+        tbl.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 7.5), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EEEEEE")),
+                                 ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CCCCCC")),
+                                 ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+        story.append(tbl)
+    story += [Spacer(1, 8), para("Evidence", h2)]
+    story += [para(f"[{e.id}] {e.title} ({e.source})", small) for e in state.evidence.items.values()]
+
+    buf = io.BytesIO()
+    SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm,
+                      bottomMargin=16 * mm, title=f"{state.ticker} research memo", author="FinSight").build(story)
+    return buf.getvalue()
 
 
 def export(state: AnalysisState, fmt: str) -> tuple[bytes, str]:
