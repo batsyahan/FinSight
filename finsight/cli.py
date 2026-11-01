@@ -20,13 +20,16 @@ from finsight.graph.workflow import run_analysis
 from finsight.llm.base import LLMError
 from finsight.obs import usage_summary
 
-ICONS = {"researcher": "🔎", "quant": "📊", "risk": "⚠️ ", "writer": "✍️ ", "critic": "🧐"}
+ICONS = {"planner": "🗺️ ", "researcher": "🔎", "quant": "📊", "peers": "👥", "risk": "⚠️ ", "writer": "✍️ ",
+         "critic": "🧐"}
 
 
 def _on_step(name: str, state) -> None:
     detail = ""
-    if name in ("researcher", "quant"):
-        detail = f"{len(state.findings_for(name))} findings, {len(state.evidence.items)} evidence items"
+    if name == "planner":
+        detail = "analysts: " + ", ".join(state.plan)
+    elif name in ("researcher", "quant", "peers"):
+        detail = f"{len(state.findings_for(name))} findings"
     elif name == "risk":
         detail = f"{len(state.risk_flags)} rule flags"
     elif name == "writer":
@@ -45,7 +48,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     print(f"FinSight → {args.ticker.upper()}  (llm={s.llm}, data={s.data})")
     t0 = time.time()
     try:
-        state = run_analysis(args.ticker, args.question, settings=s, engine_name=args.engine, on_step=_on_step)
+        state = run_analysis(args.ticker, args.question, settings=s, engine_name=args.engine, on_step=_on_step,
+                             analysts=_csv(args.analysts), peers=_csv(args.peers))
     except LLMError as e:
         print(f"\nLLM error: {e}", file=sys.stderr)
         msg = str(e)
@@ -136,6 +140,10 @@ def cmd_eval_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _csv(value: str | None) -> list[str] | None:
+    return [x.strip() for x in value.split(",") if x.strip()] if value else None
+
+
 def _appendix(state) -> str:
     lines = ["", "", "---", "", "### Evidence", ""]
     for ev in state.evidence.items.values():
@@ -155,6 +163,9 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--data", choices=["sample", "yfinance"], default=None)
     a.add_argument("--engine", choices=["auto", "langgraph", "builtin"], default=None)
     a.add_argument("--max-revisions", type=int, default=None)
+    a.add_argument("--analysts", default=None,
+                   help="comma-separated analysts to run, e.g. quant,peers (default: the planner decides)")
+    a.add_argument("--peers", default=None, help="comma-separated peer tickers, e.g. TCS.NS,WIPRO.NS")
     a.add_argument("--out", default="reports")
     a.add_argument("--print", action="store_true", help="also print the memo")
     a.set_defaults(func=cmd_analyze)

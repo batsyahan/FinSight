@@ -69,16 +69,17 @@ class SampleProvider:
         }
 
     def prices(self, ticker: str, period: str = "2y") -> pd.Series:
+        # One 5-year path per ticker; shorter periods are slices of it, so 1y and 2y agree.
+        full = _PERIOD_DAYS["5y"]
         n = _PERIOD_DAYS.get(period, 504)
         rng = self._rng(ticker, "prices")
         mu = rng.uniform(-0.05, 0.25) / 252  # daily drift
         sigma = rng.uniform(0.15, 0.45) / math.sqrt(252)
-        shocks = rng.normal(mu - 0.5 * sigma**2, sigma, n)
+        shocks = rng.normal(mu - 0.5 * sigma**2, sigma, full)
         start = float(rng.uniform(100, 3000))
         values = start * np.exp(np.cumsum(shocks))
-        end = date(2026, 10, 30)
-        idx = pd.bdate_range(end=end, periods=n)
-        return pd.Series(np.round(values, 2), index=idx, name="close")
+        idx = pd.bdate_range(end=date(2026, 10, 30), periods=full)
+        return pd.Series(np.round(values, 2), index=idx, name="close").iloc[-n:]
 
     def fundamentals(self, ticker: str) -> dict[str, Any]:
         rng = self._rng(ticker, "fund")

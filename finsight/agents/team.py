@@ -15,11 +15,25 @@ from finsight.tools.risk import evaluate_risks, risk_score
 from finsight.verify import verify_memo
 
 
+ANALYSTS = ["researcher", "quant", "peers"]  # agents that can run in parallel after the planner
+DEFAULT_PLAN = ["researcher", "quant", "peers"]
+
+
 @dataclass
 class Team:
     llm: Any
     tools: ToolRegistry
     max_revisions: int = 2
+
+    # ------------------------------------------------------------------ planner
+    def planner(self, state: AnalysisState) -> AnalysisState:
+        if not state.plan:
+            state.plan = list(DEFAULT_PLAN)
+        state.log("planner", "plan", {"analysts": state.plan})
+        return state
+
+    def route_analysts(self, state: AnalysisState) -> list[str]:
+        return [a for a in ANALYSTS if a in state.plan]
 
     # ------------------------------------------------------------------ researcher
     def researcher(self, state: AnalysisState) -> AnalysisState:
@@ -33,7 +47,22 @@ class Team:
             max_steps=5,
             seed=[("get_company_profile", {}), ("get_fundamentals", {}), ("get_news", {"limit": 6})],
         )
-        state.findings.extend(findings)
+        state.add_findings(findings)
+        return state
+
+    # ------------------------------------------------------------------ peers
+    def peers(self, state: AnalysisState) -> AnalysisState:
+        findings = run_react_agent(
+            agent="peers",
+            role_prompt=prompts.PEERS,
+            task=f"Compare {state.ticker} with its sector peers.",
+            llm=self.llm,
+            tools=self.tools.subset(["find_peers", "compare_peers"]),
+            state=state,
+            max_steps=3,
+            seed=[("find_peers", {}), ("compare_peers", {})],
+        )
+        state.add_findings(findings)
         return state
 
     # ------------------------------------------------------------------ quant
@@ -48,7 +77,7 @@ class Team:
             max_steps=5,
             seed=[("get_price_stats", {"period": "2y"}), ("run_backtest", {}), ("compute_ratios", {})],
         )
-        state.findings.extend(findings)
+        state.add_findings(findings)
         return state
 
     # ------------------------------------------------------------------ risk
@@ -74,7 +103,7 @@ class Team:
         )
         reply = self.llm.complete(prompts.RISK, [{"role": "user", "content": user}], role="risk", context=state)
         try:
-            state.findings.extend(_parse_findings("risk", extract_json(reply), state))
+            state.add_findings(_parse_findings("risk", extract_json(reply), state))
         except ValueError:
             state.errors.append("risk: could not parse LLM reply")
         return state

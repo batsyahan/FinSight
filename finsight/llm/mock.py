@@ -16,6 +16,7 @@ from finsight.state import AnalysisState
 PLANS = {
     "researcher": [("get_company_profile", {}), ("get_fundamentals", {}), ("get_news", {"limit": 5})],
     "quant": [("get_price_stats", {"period": "2y"}), ("run_backtest", {"fast": 50, "slow": 200}), ("compute_ratios", {})],
+    "peers": [("find_peers", {}), ("compare_peers", {})],
 }
 
 
@@ -45,8 +46,25 @@ class MockLLM:
         for tool, args in PLANS[role]:
             if tool not in done:
                 return json.dumps({"thought": f"I need {tool} to answer this.", "action": tool, "args": args})
-        findings = self._researcher_findings(state) if role == "researcher" else self._quant_findings(state)
+        findings = self.findings_for_role(role, state)
         return json.dumps({"thought": "I have what I need.", "final": {"findings": findings}})
+
+    def findings_for_role(self, role: str, state: AnalysisState) -> list[dict[str, Any]]:
+        return {"researcher": self._researcher_findings, "quant": self._quant_findings,
+                "peers": self._peer_findings}[role](state)
+
+    def _peer_findings(self, s: AnalysisState) -> list[dict[str, Any]]:
+        ev = self._ev(s, "compare_peers")
+        if not ev:
+            return []
+        out = []
+        for metric, label in (("return_1y_pct", "1-year return"), ("net_margin_pct", "net margin"),
+                              ("pe_ratio", "P/E")):
+            v = ev.data["vs_peers"].get(metric)
+            if v:
+                out.append({"text": f"{label}: {v['subject']} vs peer median {v['peer_median']} "
+                                    f"(rank {v['rank']} of {v['out_of']}).", "citations": [ev.id]})
+        return out
 
     @staticmethod
     def _ev(state: AnalysisState, source: str):
@@ -148,6 +166,18 @@ class MockLLM:
             L.append(f"A {d['strategy']} strategy returned {d['strategy_return_pct']}% versus "
                      f"{d['buy_hold_return_pct']}% for buy-and-hold, spending {d['time_in_market_pct']}% of days "
                      f"invested [{bt.id}].")
+
+        peers = e("compare_peers")
+        if peers and peers.data.get("vs_peers"):
+            L += ["", "## Peer Comparison", ""]
+            L.append(f"Compared with {', '.join(peers.data['peers'])} [{peers.id}]:")
+            names = {"return_1y_pct": "1-year return (%)", "net_margin_pct": "Net margin (%)",
+                     "roe_pct": "ROE (%)", "debt_to_equity": "Debt-to-equity", "pe_ratio": "P/E"}
+            for metric, label in names.items():
+                v = peers.data["vs_peers"].get(metric)
+                if v:
+                    L.append(f"- {label}: {v['subject']} vs peer median {v['peer_median']}, rank {v['rank']} "
+                             f"of {v['out_of']} [{peers.id}].")
 
         L += ["", "## Key Risks", ""]
         if s.risk_flags and risk:

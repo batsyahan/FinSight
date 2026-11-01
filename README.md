@@ -20,14 +20,14 @@ Most "AI analyst" demos let an LLM write numbers from memory. FinSight doesn't:
 ## Architecture
 
 ```
-            ┌────────────┐
- ticker ──▶ │ Researcher │  ReAct tool loop: profile, financial statements, news
-            └─────┬──────┘
-                  ▼
-            ┌────────────┐
-            │   Quant    │  ReAct tool loop: price stats, SMA backtest, ratios
-            └─────┬──────┘
-                  ▼
+                        ┌────────────┐
+                   ┌──▶ │ Researcher │  profile, financial statements, news
+                   │    └────────────┘
+ ticker ─▶ Planner ┼──▶ │   Quant    │  price stats, SMA backtest, ratios        (parallel)
+                   │    └────────────┘
+                   └──▶ │   Peers    │  sector peer group, side-by-side ranking
+                        └─────┬──────┘
+                              ▼  fan-in
             ┌────────────┐
             │    Risk    │  rule-based flags (transparent thresholds) + LLM judgement
             └─────┬──────┘
@@ -87,6 +87,8 @@ FINSIGHT_LLM=openai  OPENAI_BASE_URL=http://localhost:11434/v1  FINSIGHT_MODEL=l
 ```bash
 finsight analyze INFY.NS -q "Is the valuation justified by growth?"
 finsight analyze RELIANCE.NS --data yfinance --llm anthropic
+finsight analyze INFY.NS --peers TCS.NS,WIPRO.NS,HCLTECH.NS     # choose peers
+finsight analyze INFY.NS --analysts quant,peers                # run only some analysts
 ```
 
 NSE tickers use `.NS` and BSE tickers use `.BO`. Reports are saved to `reports/<TICKER>_memo.md` and `reports/<TICKER>_trace.json`. The trace contains every agent thought, tool call and evidence item.

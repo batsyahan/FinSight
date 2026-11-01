@@ -79,7 +79,8 @@ def test_react_loop_recovers_from_bad_json_and_unknown_tools():
 def test_offline_pipeline_produces_approved_cited_memo():
     steps = []
     state = run_analysis("DEMO", settings=OFFLINE, engine_name="builtin", on_step=lambda n, s: steps.append(n))
-    assert steps == ["researcher", "quant", "risk", "writer", "critic"]
+    assert steps[0] == "planner" and set(steps[1:4]) == {"researcher", "quant", "peers"}
+    assert steps[4:] == ["risk", "writer", "critic"]
     assert state.approved and state.revisions == 0
     assert "## Key Risks" in state.memo and "[S" in state.memo
     assert "SYNTHETIC" in state.memo
@@ -222,7 +223,7 @@ class NativeMock(MockLLM):
 
     def chat_tools(self, system, messages, tools, *, tool_choice="auto", role="", context=None, max_tokens=1500):
         self.calls += 1
-        f = self._researcher_findings(context) if role == "researcher" else self._quant_findings(context)
+        f = self.findings_for_role(role, context)
         f = f + [{"text": "From memory: revenue was $19bn.", "citations": []}]
         return {"content": "", "tool_calls": [{"id": "done", "name": "submit_findings", "args": {"findings": f}}]}
 
@@ -232,11 +233,12 @@ def test_native_loop_seeds_core_evidence_and_drops_memory_claims():
     steps = []
     state = run_analysis("INFY", llm=llm, settings=OFFLINE, engine_name="builtin",
                          on_step=lambda n, s: steps.append((n, len(s.evidence.items))))
-    assert dict(steps)["researcher"] == 3 and dict(steps)["quant"] == 6
-    assert llm.calls == 2  # one LLM call per ReAct agent: cheap on rate-limited free tiers
+    sources = [ev.source for ev in state.evidence.items.values()]
+    assert {"get_company_profile", "get_price_stats", "compare_peers"} <= set(sources)
+    assert llm.calls == 3  # one LLM call per ReAct agent (researcher, quant, peers)
     assert state.approved and all("From memory" not in f.text for f in state.findings)
     seeded = [t for t in state.trace if t["event"] == "tool" and t["detail"]["seeded"]]
-    assert len(seeded) == 6
+    assert len(seeded) == 8  # 3 researcher + 3 quant + 2 peers
 
 
 class TextAnswerMock(MockLLM):
@@ -254,7 +256,8 @@ def test_native_loop_accepts_markdown_findings_with_citations():
     state = run_analysis("INFY", llm=TextAnswerMock(), settings=OFFLINE, engine_name="builtin")
     texts = [f.text for f in state.findings_for("researcher")]
     assert texts == ["Profile – company profiled from data.", "Price and fundamentals reviewed."]
-    assert state.findings_for("researcher")[1].citations == ["S2", "S3"]
+    cited = state.findings_for("researcher")[1].citations
+    assert [state.evidence.get(c).source for c in cited] == ["get_fundamentals", "get_news"]
 
 
 def test_native_loop_salvages_groq_failed_generation():

@@ -1,7 +1,10 @@
 """Wires the agent team into a graph:
 
-    researcher -> quant -> risk -> writer -> critic --(revise)--> writer
-                                                    \\--(done)---> END
+    START -> planner -> (analysts in parallel) -> risk -> writer -> critic --revise--> writer
+                        researcher | quant | peers                         \\--done---> END
+
+The planner picks which analysts run; they fan out in parallel and fan back in at risk.
+Runs on LangGraph when installed (native fan-out), otherwise on the built-in engine.
 """
 
 from __future__ import annotations
@@ -11,7 +14,7 @@ import os
 import time
 from typing import Any, Callable
 
-from finsight.agents.team import Team
+from finsight.agents.team import ANALYSTS, Team
 from finsight.config import Settings
 from finsight.data.providers import MarketDataProvider, get_provider
 from finsight.graph import engine
@@ -20,7 +23,6 @@ from finsight.obs import instrument
 from finsight.state import AnalysisState
 from finsight.tools.registry import build_tools
 
-PIPELINE = ["researcher", "quant", "risk", "writer", "critic"]
 StepCallback = Callable[[str, AnalysisState], None]
 
 
@@ -49,11 +51,15 @@ def timed(name: str, fn: Callable[[AnalysisState], AnalysisState]) -> Callable[[
 
 
 def _wire(graph: Any, team: Team, start: Any, end: Any, wrap: Callable) -> None:
-    for name in PIPELINE:
+    nodes = ["planner", *ANALYSTS, "risk", "writer", "critic"]
+    for name in nodes:
         graph.add_node(name, wrap(timed(name, getattr(team, name))))
-    graph.add_edge(start, "researcher")
-    for a, b in zip(PIPELINE, PIPELINE[1:]):
-        graph.add_edge(a, b)
+    graph.add_edge(start, "planner")
+    graph.add_conditional_edges("planner", wrap(team.route_analysts, router=True), {a: a for a in ANALYSTS})
+    for a in ANALYSTS:
+        graph.add_edge(a, "risk")
+    graph.add_edge("risk", "writer")
+    graph.add_edge("writer", "critic")
     graph.add_conditional_edges("critic", wrap(team.route_after_critic, router=True),
                                 {"revise": "writer", "done": end})
 
@@ -65,12 +71,15 @@ def run_builtin(team: Team, state: AnalysisState, on_step: StepCallback | None) 
 
 
 def run_langgraph(team: Team, state: AnalysisState, on_step: StepCallback | None) -> AnalysisState:
-    from typing import TypedDict
+    from typing import Annotated, TypedDict
 
     from langgraph.graph import END, START, StateGraph
 
+    def same_state(_old: AnalysisState, new: AnalysisState) -> AnalysisState:
+        return new  # parallel branches all mutate and return the one shared, thread-safe state
+
     class GraphState(TypedDict):
-        s: AnalysisState
+        s: Annotated[AnalysisState, same_state]
 
     def wrap(fn, router=False):
         if router:
@@ -88,7 +97,7 @@ def run_langgraph(team: Team, state: AnalysisState, on_step: StepCallback | None
     g = StateGraph(GraphState)
     _wire(g, team, START, END, wrap)
     app = g.compile()
-    return app.invoke({"s": state}, config={"recursion_limit": 50})["s"]
+    return app.invoke({"s": state}, config={"recursion_limit": 60})["s"]
 
 
 def run_analysis(
@@ -100,12 +109,20 @@ def run_analysis(
     settings: Settings | None = None,
     engine_name: str | None = None,
     on_step: StepCallback | None = None,
+    analysts: list[str] | None = None,
+    peers: list[str] | None = None,
 ) -> AnalysisState:
     s = settings or Settings.from_env()
     provider = provider or get_provider(s.data)
     state = AnalysisState(ticker=ticker.strip().upper())
     if question:
         state.question = question
+    if analysts:
+        unknown = set(analysts) - set(ANALYSTS)
+        if unknown:
+            raise ValueError(f"unknown analysts {sorted(unknown)}; choose from {ANALYSTS}")
+        state.plan = list(analysts)
+    state.peers = [p.strip().upper() for p in (peers or []) if p.strip()]
     llm = instrument(llm or get_llm(s), state)
     team = Team(llm=llm, tools=build_tools(provider, state), max_revisions=s.max_revisions)
 

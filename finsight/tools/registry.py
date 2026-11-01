@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from finsight.data.providers import MarketDataProvider
 from finsight.state import AnalysisState
+from finsight.tools.peers import compare_peers, find_peers
 from finsight.tools.quant import fundamental_ratios, price_stats, sma_crossover_backtest
 
 
@@ -110,6 +111,20 @@ def build_tools(provider: MarketDataProvider, state: AnalysisState) -> ToolRegis
     reg.register(Tool(
         "compute_ratios", "Growth, margins, ROE, debt/equity, current ratio and P/E from fundamentals.",
         lambda: fundamental_ratios(fundamentals()), title=f"{t} fundamental ratios"))
+
+    def _peer_list(tickers: str = "") -> list[str]:
+        chosen = [x.strip() for x in str(tickers).split(",") if x.strip()]
+        return chosen or state.peers or find_peers(t, provider)["peers"]
+
+    reg.register(Tool(
+        "find_peers", "Find the company's sector peer group.", lambda: find_peers(t, provider),
+        title=f"{t} sector peer group"))
+    reg.register(Tool(
+        "compare_peers", "Compare 1-year return, risk, growth, margins, leverage and P/E against peers; "
+        "ranks the company on each metric.",
+        lambda tickers="": compare_peers(t, _peer_list(tickers), provider),
+        params={"tickers": "comma-separated peer tickers (optional; defaults to the sector peers)"},
+        title=f"{t} vs peers"))
     return reg
 
 

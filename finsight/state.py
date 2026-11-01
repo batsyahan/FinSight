@@ -87,6 +87,8 @@ class Finding:
 class AnalysisState:
     ticker: str
     question: str = "Should a long-term investor consider this stock?"
+    plan: list[str] = field(default_factory=list)  # analyst agents to run (set by the planner)
+    peers: list[str] = field(default_factory=list)  # optional user-chosen peer tickers
     evidence: EvidenceStore = field(default_factory=EvidenceStore)
     findings: list[Finding] = field(default_factory=list)
     risk_flags: list[dict[str, Any]] = field(default_factory=list)
@@ -103,6 +105,10 @@ class AnalysisState:
     def log(self, agent: str, event: str, detail: Any = None) -> None:
         with self._lock:
             self.trace.append({"agent": agent, "event": event, "detail": detail})
+
+    def add_findings(self, findings: list[Finding]) -> None:
+        with self._lock:
+            self.findings.extend(findings)
 
     def findings_for(self, agent: str) -> list[Finding]:
         return [f for f in self.findings if f.agent == agent]
