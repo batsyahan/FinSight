@@ -12,6 +12,7 @@ RUN pip install ".[api,market,langgraph,rag,redis,ui,pdf]"
 COPY finsight ./finsight
 COPY app ./app
 COPY examples ./examples
+COPY .streamlit ./.streamlit
 RUN pip install --no-deps . && useradd --create-home --uid 1000 finsight && mkdir -p /app/reports /app/.finsight_cache \
     && chown -R finsight /app
 USER finsight

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import threading
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -120,7 +121,8 @@ class AnalysisState:
 
     def log(self, agent: str, event: str, detail: Any = None) -> None:
         with self._lock:
-            self.trace.append({"agent": agent, "event": event, "detail": detail})
+            self.trace.append({"agent": agent, "event": event, "detail": detail,
+                               "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds")})
 
     def add_findings(self, findings: list[Finding]) -> None:
         with self._lock:

@@ -89,12 +89,30 @@ finsight portfolio "INFY.NS:40,HDFCBANK.NS:30,ITC.NS:30" --memos        # portfo
 finsight watch --file watchlist.txt --webhook https://hooks.slack.com/... # daily alerts
 finsight eval --universe nifty-it --pause 20                            # benchmark
 finsight eval-compare reports/eval_*.json                               # compare models
-streamlit run app/streamlit_app.py                                      # web UI
+streamlit run app/streamlit_app.py                                      # web app (9 pages)
 uvicorn finsight.api:app --port 8000                                    # REST API (docs at /docs)
 docker compose up --build                                               # API + UI + Redis
 ```
 
 NSE tickers end in `.NS`, BSE in `.BO`. Every run writes `reports/<TICKER>_memo.md` and a `_trace.json` with every agent step, tool call, evidence item, token count and guardrail event.
+
+## Web app
+
+`streamlit run app/streamlit_app.py` opens a dark, glass-style research terminal with nine pages:
+
+| Page | What it does |
+|---|---|
+| **Overview** | Live KPIs (companies tracked, research runs, backtests, open risk flags), benchmark chart with range control, the latest run's agent pipeline, watchlist, risk summary, recent memos, data-source health |
+| **Research** | One company: price chart, key ratios, the agents' verdict (outlook label and claims verified), news, cited takeaways; tabs for financial history vs benchmark, every ratio with formula and the reason when unavailable, backtests, risks, news and filings (SEC EDGAR for US), memo |
+| **Agents** | Start a run (question, analysts, peers, filings upload), watch each agent's live status, then inspect tool calls, findings, every Critic round's rejections, risk flags and guardrail events |
+| **Backtests** | Four predefined strategies with cash accounting, next-close execution, commission and slippage. Equity vs benchmark, drawdown, trade log, metrics, documented assumptions |
+| **Watchlist** | Add or remove companies; price, 1D change, P/E, research and risk status; open or run research per row |
+| **Risk Monitor** | Filter and sort flags; each has its rule, observed value, supporting calculation, why it matters, and a review workflow that never deletes evidence |
+| **Memo Library** | Memos with hover citations, the Critic's claim-by-claim report, sources, version history, and Markdown/HTML/PDF export |
+| **Data Sources** | Integration status; nothing is "connected" until a live check (run on request) succeeds |
+| **Settings** | LLM, model, data source, revision budget, benchmark. API keys stay in `.env` or host secrets and are never stored |
+
+Runs, memos, the watchlist, flags, backtests and settings persist in SQLite (`FINSIGHT_DB`). With no data yet, pages show empty states, never invented activity. Synthetic sample data is labelled wherever it appears.
 
 ## Features
 

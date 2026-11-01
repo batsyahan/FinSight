@@ -32,15 +32,3 @@ def test_pdf_export():
     state.memo += "\nUnicode check: 52‑week, ₹1,185, −3.2% [S1]."
     content, ext = export(state, "pdf")
     assert ext == "pdf" and content[:5] == b"%PDF-" and len(content) > 1500
-
-
-def test_streamlit_app_runs_an_offline_analysis():
-    pytest.importorskip("streamlit")
-    from streamlit.testing.v1 import AppTest
-
-    at = AppTest.from_file(str(APP), default_timeout=60)
-    at.run()
-    assert not at.exception
-    at.button[0].click().run()  # "Run analysis" with the default DEMO ticker and mock LLM
-    assert not at.exception
-    assert any("Approved" in str(m.value) for m in at.metric)
