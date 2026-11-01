@@ -238,7 +238,11 @@ class Team:
         approved = bool(review.get("approved")) and check["passed"]
         state.critique = {"approved": approved, "issues": [] if approved else issues, "check": check["stats"]}
         state.approved = approved
-        state.log("critic", "review", {"approved": approved, "issues": len(issues)})
+        state.log("critic", "review", {"approved": approved, "issues": len(issues), "issue_list": issues[:12],
+                                       "round": sum(1 for x in state.trace if x["event"] == "review"
+                                                    and x["agent"] == "critic") + 1,
+                                       "claims": check["stats"].get("claims"),
+                                       "claims_verified": check["stats"].get("claims_verified")})
         return state
 
     def route_after_critic(self, state: AnalysisState) -> str:

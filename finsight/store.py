@@ -155,7 +155,7 @@ class Store:
         if ticker:
             q, args = q + " WHERE ticker=?", [ticker.upper()]
         with self._conn() as c:
-            rows = c.execute(q + " ORDER BY created_at DESC LIMIT ?", (*args, limit)).fetchall()
+            rows = c.execute(q + " ORDER BY rowid DESC LIMIT ?", (*args, limit)).fetchall()
         return [_decode(dict(r)) for r in rows]
 
     def run(self, run_id: str) -> dict[str, Any] | None:
@@ -190,7 +190,7 @@ class Store:
                 q += f" AND {col}=?"
                 args.append(val)
         if latest_only:
-            q += " AND run_id IN (SELECT id FROM runs r WHERE created_at = (SELECT MAX(created_at) FROM runs " \
+            q += " AND run_id IN (SELECT id FROM runs r WHERE rowid = (SELECT MAX(rowid) FROM runs " \
                  "WHERE ticker=r.ticker AND status='completed'))"
         with self._conn() as c:
             rows = c.execute(q + " ORDER BY detected_at DESC, id", args).fetchall()
