@@ -304,3 +304,40 @@ def run_health_checks(settings: Settings, store: Store) -> dict[str, dict[str, A
 
 def finite(v: Any) -> bool:
     return isinstance(v, (int, float)) and not (isinstance(v, float) and math.isnan(v))
+
+
+# --------------------------------------------------------------------------- stored runs -> objects
+OUTLOOK_RE = re.compile(r"\*\*\s*(Positive|Neutral|Cautious)\b", re.IGNORECASE)
+
+
+def outlook(memo: str) -> str | None:
+    m = OUTLOOK_RE.search(memo or "")
+    return m.group(1).title() if m else None
+
+
+def state_from_run(run: dict[str, Any], memo: dict[str, Any] | None = None):
+    """Rebuild a read-only AnalysisState from a stored run (for rendering, export and re-verification)."""
+    from finsight.state import AnalysisState, Evidence
+
+    st = AnalysisState(ticker=run["ticker"], question=run.get("question") or "")
+    for k, e in (run.get("evidence") or {}).items():
+        st.evidence.items[k] = Evidence(id=k, source=e["source"], title=e["title"], data=e["data"])
+    st.memo = (memo or {}).get("memo", "")
+    st.approved = bool(run.get("approved"))
+    st.revisions = run.get("revisions") or 0
+    st.plan = run.get("plan") or []
+    return st
+
+
+def critic_rounds(run: dict[str, Any]) -> list[dict[str, Any]]:
+    return [t["detail"] for t in run.get("trace") or [] if t.get("agent") == "critic" and t.get("event") == "review"]
+
+
+def exchange(ticker: str) -> str:
+    if ticker.endswith(".NS"):
+        return "NSE"
+    if ticker.endswith(".BO"):
+        return "BSE"
+    if ticker.startswith("^"):
+        return "Index"
+    return "US / other"
