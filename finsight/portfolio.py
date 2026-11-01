@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from finsight.data.providers import MarketDataProvider
+from finsight.guardrails import validate_ticker
 from finsight.state import EvidenceStore
 from finsight.tools.quant import price_stats
 from finsight.verify import verify_memo
@@ -35,9 +36,9 @@ def parse_holdings(spec: str) -> dict[str, float]:
             continue
         if ":" in part:
             t, w = part.rsplit(":", 1)
-            raw[t.strip().upper()] = float(w)
+            raw[validate_ticker(t)] = float(w)
         else:
-            raw[part.upper()] = None
+            raw[validate_ticker(part)] = None
     if not raw:
         raise ValueError("no holdings given")
     if any(v is None for v in raw.values()):

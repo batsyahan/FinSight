@@ -20,6 +20,7 @@ from finsight.agents.team import ANALYSTS, Team
 from finsight.config import Settings
 from finsight.data.providers import MarketDataProvider, get_provider
 from finsight.graph import engine
+from finsight.guardrails import validate_ticker
 from finsight.llm.providers import get_llm
 from finsight.obs import instrument
 from finsight.state import AnalysisState
@@ -123,7 +124,7 @@ def run_analysis(
     """``filings`` is a FilingsIndex, or paths (files/dirs, comma-separated) to index."""
     s = settings or Settings.from_env()
     provider = provider or get_provider(s.data)
-    state = AnalysisState(ticker=ticker.strip().upper())
+    state = AnalysisState(ticker=validate_ticker(ticker))
     if question:
         state.question = question
     if analysts:
@@ -131,7 +132,7 @@ def run_analysis(
         if unknown:
             raise ValueError(f"unknown analysts {sorted(unknown)}; choose from {ANALYSTS}")
         state.plan = list(analysts)
-    state.peers = [p.strip().upper() for p in (peers or []) if p.strip()]
+    state.peers = [validate_ticker(p) for p in (peers or []) if p.strip()]
     llm = instrument(llm or get_llm(s), state)
     if filings is not None and not hasattr(filings, "search"):
         from finsight.rag.index import FilingsIndex

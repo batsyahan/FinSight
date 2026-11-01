@@ -18,6 +18,7 @@ import json
 import re
 from typing import Any
 
+from finsight.guardrails import UNTRUSTED_NOTE
 from finsight.llm.base import LLMError, extract_json
 from finsight.state import AnalysisState, Finding
 from finsight.tools.registry import ToolRegistry, to_json
@@ -86,7 +87,8 @@ def run_react_agent(
     evidence exists no matter how reliably a given model uses tools."""
     if hasattr(llm, "chat_tools"):
         return _run_native(agent, role_prompt, task, llm, tools, state, max_steps, seed or [])
-    system = role_prompt.strip() + "\n\n" + PROTOCOL.format(tools=tools.describe(), max_steps=max_steps)
+    system = (role_prompt.strip() + "\n\n" + PROTOCOL.format(tools=tools.describe(), max_steps=max_steps)
+              + "\n\n" + UNTRUSTED_NOTE)
     messages: list[dict[str, str]] = [{"role": "user", "content": task}]
     state.log(agent, "start", task)
     tool_successes = 0
@@ -157,7 +159,7 @@ def _run_native(agent: str, role_prompt: str, task: str, llm: Any, tools: ToolRe
     2. The model may call more tools, then answers via submit_findings (or JSON / a bullet list).
     3. Findings without a valid evidence citation are dropped; the Critic checks the memo later.
     """
-    system = role_prompt.strip() + "\n\n" + NATIVE_PROTOCOL.format(max_steps=max_steps)
+    system = role_prompt.strip() + "\n\n" + NATIVE_PROTOCOL.format(max_steps=max_steps) + "\n\n" + UNTRUSTED_NOTE
     all_schemas = tools.schemas() + [SUBMIT_TOOL]
     messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
     state.log(agent, "start", task)

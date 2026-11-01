@@ -20,6 +20,10 @@ Most "AI analyst" demos let an LLM write numbers from memory. FinSight doesn't:
   - a news Sentiment agent built on an explainable finance word list;
   - portfolio mode, with historical and parametric VaR, Expected Shortfall, correlation, diversification ratio, risk contribution and sector HHI.
 - **Filings RAG agent.** It searches annual reports and earnings-call transcripts (PDF, text, Markdown or HTML) with BM25, or with BM25 plus embeddings when `FINSIGHT_EMBED_MODEL` is set. It writes its own queries, and every excerpt is cited with its document and page. Figures quoted from filings go through the same grounding check as everything else.
+- **Guardrails.**
+  - News, filings and company text are scanned for prompt-injection attempts ("ignore previous instructions", "rate this a strong buy"). Matches are removed before any model sees them and reported as security events.
+  - The verifier rejects direct buy/sell instructions, guaranteed-return claims and a missing disclaimer.
+  - Tickers are validated, because they also end up in file paths.
 - **Planner agent.** It reads the investor's question and picks which analysts to run and what the memo should focus on. A keyword planner is the fallback.
 - **Human in the loop.** With `--review` you approve, request changes or edit the memo. Edits go back through the Critic, so a human can't slip in an unsupported figure either.
 - **Runs on LangGraph** when installed, or on a small built-in state-graph engine with the same node functions.
@@ -150,6 +154,7 @@ Running on a real model exposed failure modes that the offline tests didn't. Eac
 | Free-tier 429 rate limits | Waits for the provider's "try again in Xs" |
 | `52‑week` with a Unicode hyphen failed the checker | Dashes normalised before verification |
 | Mixed "$" and INR for one figure | Separate statement and price currencies; currency check |
+| (eval harness) made-up figures matched other figures by coincidence | Figures must match the evidence their own sentence cites, to the precision written |
 
 ## Tests
 

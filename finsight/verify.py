@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from finsight.guardrails import advice_issues
 from finsight.state import EvidenceStore
 
 CITE_RE = re.compile(r"\[(S\d+(?:\s*,\s*S\d+)*)\]")
@@ -139,6 +140,7 @@ def verify_memo(memo: str, evidence: EvidenceStore) -> dict[str, Any]:
 
     if not cited and evidence.items:
         issues.append("Memo contains no citations at all.")
+    issues += advice_issues(memo)
 
     # de-duplicate while keeping order
     seen, uniq = set(), []

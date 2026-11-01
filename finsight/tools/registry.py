@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from finsight.data.providers import MarketDataProvider
+from finsight.guardrails import sanitize
 from finsight.state import AnalysisState
 from finsight.tools.peers import compare_peers, find_peers
 from finsight.tools.quant import fundamental_ratios, price_stats, sma_crossover_backtest
@@ -71,6 +72,12 @@ class ToolRegistry:
         except Exception as e:  # tools must never crash the agent loop
             return {"error": f"{type(e).__name__}: {e}"}
         data = out if isinstance(out, dict) else {"items": out}
+        data, hits = sanitize(data)  # strip prompt-injection attempts before any model sees them
+        if hits:
+            event = {"type": "prompt_injection", "tool": name, "matches": hits[:5]}
+            with self.state._lock:
+                self.state.security_events.append(event)
+            self.state.log("guardrail", "prompt_injection_removed", event)
         ev = self.state.evidence.add(source=name, title=tool.title or name, data=data)
         return {"evidence_id": ev.id, "data": data}
 

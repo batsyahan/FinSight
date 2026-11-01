@@ -86,6 +86,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print("\nTool calls that failed:")
         for d in failed:
             print(f"  - {d.get('tool')}: {d.get('result')}")
+    if state.security_events:
+        print(f"\n🛡️  Guardrails removed {len(state.security_events)} prompt-injection attempt(s) from tool data:")
+        for ev in state.security_events[:5]:
+            print(f"  - {ev['tool']}: {', '.join(ev['matches'])[:120]}")
     tot = usage_summary(state)["totals"]
     approx = "~" if tot["tokens_estimated"] else ""
     cost = f", est. cost ${tot['cost_usd']}" if tot["cost_usd"] else ""
@@ -216,6 +220,9 @@ def _appendix(state) -> str:
     lines = ["", "", "---", "", "### Evidence", ""]
     for ev in state.evidence.items.values():
         lines.append(f"- **[{ev.id}]** {ev.title} (`{ev.source}`)")
+    if state.security_events:
+        lines += ["", "### Guardrail notices", ""]
+        lines += [f"- Removed possible prompt injection from `{e['tool']}` output" for e in state.security_events]
     return "\n".join(lines) + "\n"
 
 

@@ -114,6 +114,7 @@ class AnalysisState:
     trace: list[dict[str, Any]] = field(default_factory=list)  # step-by-step agent log
     errors: list[str] = field(default_factory=list)
     llm_calls: list[dict[str, Any]] = field(default_factory=list)  # telemetry: one record per LLM call
+    security_events: list[dict[str, Any]] = field(default_factory=list)  # guardrail detections
     node_seconds: dict[str, float] = field(default_factory=dict)  # wall time per graph node
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
