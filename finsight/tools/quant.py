@@ -80,6 +80,8 @@ def sma_crossover_backtest(prices: pd.Series, fast: int = 50, slow: int = 200) -
     trades = int(signal[window].diff().abs().sum())
     return {
         "strategy": f"SMA {fast}/{slow} crossover",
+        "fast_window": fast,
+        "slow_window": slow,
         "evaluated_from": str(p.index[slow].date()),
         "strategy_return_pct": _pct(strat),
         "buy_hold_return_pct": _pct(hold),

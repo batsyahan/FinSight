@@ -12,30 +12,31 @@ class RiskRule:
     metric: str
     check: Callable[[float], bool]
     threshold: str
+    limit: float  # numeric threshold, recorded in evidence so the memo can cite it
     severity: str  # low | medium | high
     message: str
 
 
 RULES: list[RiskRule] = [
-    RiskRule("high_leverage", "debt_to_equity", lambda v: v > 1.5, "> 1.5", "high",
+    RiskRule("high_leverage", "debt_to_equity", lambda v: v > 1.5, "> 1.5", 1.5, "high",
              "Debt is more than 1.5x equity; balance sheet is highly leveraged."),
-    RiskRule("elevated_leverage", "debt_to_equity", lambda v: 1.0 < v <= 1.5, "1.0 to 1.5", "medium",
+    RiskRule("elevated_leverage", "debt_to_equity", lambda v: 1.0 < v <= 1.5, "1.0 to 1.5", 1.0, "medium",
              "Debt exceeds equity; leverage is elevated."),
-    RiskRule("negative_fcf", "fcf_margin_pct", lambda v: v < 0, "< 0%", "high",
+    RiskRule("negative_fcf", "fcf_margin_pct", lambda v: v < 0, "< 0%", 0, "high",
              "Free cash flow is negative; the business is consuming cash."),
-    RiskRule("loss_making", "net_margin_pct", lambda v: v < 0, "< 0%", "high",
+    RiskRule("loss_making", "net_margin_pct", lambda v: v < 0, "< 0%", 0, "high",
              "The company is loss-making at the net level."),
-    RiskRule("revenue_decline", "revenue_growth_pct", lambda v: v < 0, "< 0%", "medium",
+    RiskRule("revenue_decline", "revenue_growth_pct", lambda v: v < 0, "< 0%", 0, "medium",
              "Revenue shrank versus the previous year."),
-    RiskRule("weak_liquidity", "current_ratio", lambda v: v < 1.0, "< 1.0", "medium",
+    RiskRule("weak_liquidity", "current_ratio", lambda v: v < 1.0, "< 1.0", 1.0, "medium",
              "Current liabilities exceed current assets; short-term liquidity is tight."),
-    RiskRule("high_volatility", "ann_volatility_pct", lambda v: v > 40, "> 40%", "medium",
+    RiskRule("high_volatility", "ann_volatility_pct", lambda v: v > 40, "> 40%", 40, "medium",
              "Annualised volatility is above 40%; expect large price swings."),
-    RiskRule("deep_drawdown", "max_drawdown_pct", lambda v: v < -35, "< -35%", "medium",
+    RiskRule("deep_drawdown", "max_drawdown_pct", lambda v: v < -35, "< -35%", -35, "medium",
              "The stock fell more than 35% from a peak within the period."),
-    RiskRule("rich_valuation", "pe_ratio", lambda v: v > 60, "> 60", "low",
+    RiskRule("rich_valuation", "pe_ratio", lambda v: v > 60, "> 60", 60, "low",
              "P/E above 60 prices in a lot of future growth."),
-    RiskRule("poor_risk_adjusted_return", "sharpe", lambda v: v < 0, "< 0", "low",
+    RiskRule("poor_risk_adjusted_return", "sharpe", lambda v: v < 0, "< 0", 0, "low",
              "Returns did not beat the risk-free rate after adjusting for risk."),
 ]
 

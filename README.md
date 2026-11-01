@@ -31,7 +31,7 @@
 
 - [x] Milestone 1: project scaffold, config, shared state and evidence store
 - [x] Milestone 2: market data layer and quant/risk tools, with tests
-- [ ] Milestone 3: agents, ReAct loop, Writer↔Critic graph
+- [x] Milestone 3: agents, ReAct loop, Writer↔Critic graph
 - [ ] Milestone 4: CLI, Streamlit UI, CI
 
 ## License
