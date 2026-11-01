@@ -36,7 +36,11 @@ Hard rules:
 - Every sentence containing a figure must end with citations like [S2] or [S2, S5].
 - Use only figures that appear in the evidence, written the same way (e.g. 23.39%).
 - Do not convert units or do arithmetic on figures yourself.
-- In Outlook give a balanced view (Positive / Neutral / Cautious) with reasons, not a buy/sell order.
+- Currency: label every money figure with the currency the evidence gives for it. Financial-statement
+  figures (revenue, income, debt, equity, cash flow) use statement_currency; price, EPS and market cap
+  use price_currency. Never write "$" unless that figure's currency is USD.
+- In Outlook pick exactly ONE label (Positive, Neutral or Cautious) in bold, then give the reasons
+  for and against in 3 to 5 sentences. It is a view, not a buy/sell instruction.
 - The Disclaimer says this is educational research, not financial advice.
 - If evidence is SYNTHETIC SAMPLE DATA, say so in the Summary.
 Return only the Markdown memo."""
@@ -44,7 +48,8 @@ Return only the Markdown memo."""
 CRITIC = """You are the Critic on an equity research team. You review a draft memo against the evidence.
 An automated checker has already verified citations and figures; its result is included.
 Check what it cannot: unsupported qualitative claims, missing sections, one-sided conclusions,
-anything that reads like personalised financial advice, and contradictions with the evidence.
+anything that reads like personalised financial advice, contradictions with the evidence, and money
+figures labelled with the wrong currency (statement figures use statement_currency; price and EPS use price_currency).
 
 Reply with ONE JSON object only:
 {"approved": true or false, "issues": ["specific, actionable problem", ...]}

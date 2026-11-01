@@ -96,7 +96,8 @@ class MockLLM:
         prof, fund, news = e("get_company_profile"), e("get_fundamentals"), e("get_news")
         ps, bt, rat, risk = e("get_price_stats"), e("run_backtest"), e("compute_ratios"), e("risk_rules")
         name = prof.data.get("name") if prof else s.ticker
-        cur = (prof.data.get("currency") if prof else None) or ""
+        cur = (prof.data.get("price_currency") if prof else None) or ""
+        stmt_cur = (fund.data.get("statement_currency") if fund else None) or cur
         synthetic = any("SYNTHETIC" in str(ev.data.get("data_note", "")) for ev in s.evidence.items.values())
         L: list[str] = [f"# {name} ({s.ticker}): Research Memo", "", "## Summary", ""]
         if synthetic:
@@ -122,7 +123,7 @@ class MockLLM:
         if fund:
             rev = fund.data.get("revenue")
             if rev:
-                L.append(f"Latest annual revenue was about {rev / 1e7:,.2f} crore {cur} [{fund.id}].")
+                L.append(f"Latest annual revenue was about {rev / 1e7:,.2f} crore {stmt_cur} [{fund.id}].")
         if rat:
             d = rat.data
             parts = [f"net margin of {d['net_margin_pct']}%" if d.get("net_margin_pct") is not None else None,

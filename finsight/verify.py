@@ -19,6 +19,12 @@ from finsight.state import EvidenceStore
 
 CITE_RE = re.compile(r"\[(S\d+(?:\s*,\s*S\d+)*)\]")
 NUM_RE = re.compile(r"(?<![\w.])[-−]?\d[\d,]*(?:\.\d+)?")
+CURRENCY_PATTERNS = {
+    "USD": r"(?:US)?\$\s?\d|\bUSD\b",
+    "INR": r"₹|\bINR\b|\bRs\.?\s?\d",
+    "EUR": r"€|\bEUR\b",
+    "GBP": r"£|\bGBP\b",
+}
 PERIOD_LABEL_RE = re.compile(r"[- ]?(?:days?|weeks?|months?|years?|yrs?|d|w|m|y)\b", re.IGNORECASE)
 SCALES =[1, 1e2, 1e3, 1e5, 1e6, 1e7, 1e9, 1e12]  # incl. lakh (1e5) and crore (1e7)
 
@@ -100,6 +106,15 @@ def verify_memo(memo: str, evidence: EvidenceStore) -> dict[str, Any]:
             if not number_supported(v, ev_numbers):
                 unsupported += 1
                 issues.append(f"Figure {tok} in \"{sent[:100]}\" is not supported by any evidence.")
+
+    # currency sanity: a currency used in the memo must be one the evidence actually reports
+    ev_currencies = {str(v).upper() for ev in evidence.items.values()
+                     for k, v in ev.data.items() if "currency" in k and isinstance(v, str) and len(v) == 3}
+    if ev_currencies:
+        for code, pattern in CURRENCY_PATTERNS.items():
+            if code not in ev_currencies and re.search(pattern, body):
+                issues.append(f"Memo uses {code} but the evidence reports figures only in "
+                              f"{', '.join(sorted(ev_currencies))}.")
 
     if not cited and evidence.items:
         issues.append("Memo contains no citations at all.")

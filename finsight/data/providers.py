@@ -59,7 +59,7 @@ class SampleProvider:
             "sector": sector,
             "industry": industry,
             "country": "India",
-            "currency": "INR",
+            "price_currency": "INR",
             "market_cap": round(mcap, 0),
             "summary": (
                 f"{ticker.upper()} Sample Corp is a SYNTHETIC company generated for offline demos. "
@@ -98,7 +98,8 @@ class SampleProvider:
         eps = net_income / shares
         return {
             "fiscal_year": 2026,
-            "currency": "INR",
+            "statement_currency": "INR",
+            "price_currency": "INR",
             "revenue": round(revenue, 0),
             "revenue_prev": round(prev_revenue, 0),
             "net_income": round(net_income, 0),
@@ -177,7 +178,7 @@ class YFinanceProvider:
             "sector": info.get("sector"),
             "industry": info.get("industry"),
             "country": info.get("country"),
-            "currency": info.get("currency"),
+            "price_currency": info.get("currency"),
             "market_cap": info.get("marketCap"),
             "summary": (info.get("longBusinessSummary") or "")[:1200],
         }
@@ -213,7 +214,12 @@ class YFinanceProvider:
             fcf = ocf + capex  # capex is reported as a negative number
         return {
             "fiscal_year": str(inc.columns[0].year) if inc is not None and not inc.empty else None,
-            "currency": info.get("financialCurrency") or info.get("currency"),
+            # Statements can be reported in a different currency from the share price
+            # (e.g. an NSE listing quoted in INR whose statements Yahoo reports in USD).
+            "statement_currency": info.get("financialCurrency") or info.get("currency"),
+            "price_currency": info.get("currency"),
+            "currency_note": "revenue, income, debt, equity and cash-flow figures are in statement_currency; "
+                             "price and eps are in price_currency",
             "revenue": r(inc, ["Total Revenue", "Operating Revenue"]),
             "revenue_prev": r(inc, ["Total Revenue", "Operating Revenue"], col=1),
             "net_income": r(inc, ["Net Income", "Net Income Common Stockholders"]),

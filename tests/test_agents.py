@@ -315,3 +315,13 @@ def test_anthropic_message_conversion_alternates_roles():
     assert [m["role"] for m in out] == ["user", "assistant", "user"]
     assert [b["type"] for b in out[2]["content"]] == ["tool_result", "tool_result", "text"]
     assert out[1]["content"][1] == {"type": "tool_use", "id": "t2", "name": "b", "input": {"x": 1}}
+
+
+def test_verifier_flags_currency_not_in_evidence():
+    ev = EvidenceStore()
+    ev.add("get_fundamentals", "fund", {"statement_currency": "INR", "price_currency": "INR", "eps": 75.1})
+    assert not verify_memo("EPS was $75.1 [S1].", ev)["passed"]
+    assert verify_memo("EPS was ₹75.1 [S1].", ev)["passed"]
+    ev2 = EvidenceStore()
+    ev2.add("get_fundamentals", "fund", {"statement_currency": "USD", "price_currency": "INR", "eps": 75.1})
+    assert verify_memo("EPS was ₹75.1 [S1].", ev2)["passed"]
