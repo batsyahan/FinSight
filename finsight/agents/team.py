@@ -20,6 +20,8 @@ ANALYST_INFO = {
     "quant": "price returns, volatility, drawdown, Sharpe, strategy backtest and fundamental ratios",
     "peers": "side-by-side comparison with sector peers (relative growth, margins, valuation, returns)",
     "sentiment": "tone of recent news headlines and whether it is improving or worsening",
+    "filings": "searches the company's annual reports / earnings-call transcripts for what management said "
+               "(only available when filings are provided)",
 }
 ANALYSTS = list(ANALYST_INFO)  # agents that can run in parallel after the planner
 DEFAULT_PLAN = list(ANALYSTS)
@@ -31,6 +33,8 @@ _KEYWORDS = {
               "cheap", "expensive", "p/e", "pe ", "growth", "margin", "debt"],
     "peers": ["peer", "compare", "competitor", "versus", " vs", "sector", "industry", "relative", "valuation"],
     "sentiment": ["sentiment", "news", "headline", "mood", "market think", "perception", "media"],
+    "filings": ["annual report", "management", "guidance", "filing", "concall", "transcript", "segment",
+                "said", "commentary", "outlook"],
 }
 
 
@@ -59,7 +63,7 @@ class Team:
         if state.plan:  # chosen explicitly by the user
             state.log("planner", "plan", {"analysts": state.plan, "source": "user"})
             return state
-        menu = "\n".join(f"- {k}: {v}" for k, v in ANALYST_INFO.items())
+        menu = "\n".join(f"- {k}: {v}" for k, v in ANALYST_INFO.items() if self.available(k))
         source = "llm"
         try:
             reply = self.llm.complete(prompts.PLANNER.format(analysts=menu),
@@ -73,14 +77,19 @@ class Team:
             plan, reason = [], f"LLM plan unavailable ({type(e).__name__})"
         if not plan:
             plan, source = keyword_plan(state.question), "keywords"
+            if self.available("filings") and "filings" not in plan:
+                plan.append("filings")  # if the user supplied filings, read them
         if "quant" not in plan:
             plan.append("quant")  # risk rules need price and ratio metrics
-        state.plan = [a for a in ANALYSTS if a in plan]
+        state.plan = [a for a in ANALYSTS if a in plan and self.available(a)]
         state.log("planner", "plan", {"analysts": state.plan, "focus": state.focus, "reason": reason, "source": source})
         return state
 
     def route_analysts(self, state: AnalysisState) -> list[str]:
-        return [a for a in ANALYSTS if a in state.plan]
+        return [a for a in ANALYSTS if a in state.plan and self.available(a)]
+
+    def available(self, analyst: str) -> bool:
+        return analyst != "filings" or "search_filings" in self.tools.tools
 
     # ------------------------------------------------------------------ researcher
     def researcher(self, state: AnalysisState) -> AnalysisState:
@@ -123,6 +132,24 @@ class Team:
             state=state,
             max_steps=2,
             seed=[("score_news_sentiment", {})],
+        )
+        state.add_findings(findings)
+        return state
+
+    # ------------------------------------------------------------------ filings (RAG)
+    def filings(self, state: AnalysisState) -> AnalysisState:
+        findings = run_react_agent(
+            agent="filings",
+            role_prompt=prompts.FILINGS,
+            task=f"Investor question about {state.ticker}: {state.question}\n"
+                 f"Filings available: {', '.join(state.filings)}",
+            llm=self.llm,
+            tools=self.tools.subset(["search_filings"]),
+            state=state,
+            max_steps=4,
+            seed=[("search_filings", {"query": state.question}),
+                  ("search_filings", {"query": "outlook guidance revenue growth margin"}),
+                  ("search_filings", {"query": "key risks challenges"})],
         )
         state.add_findings(findings)
         return state

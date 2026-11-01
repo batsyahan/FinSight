@@ -19,6 +19,7 @@ Most "AI analyst" demos let an LLM write numbers from memory. FinSight doesn't:
   - a strategy lab (SMA, momentum, RSI and Bollinger) backtested net of costs, with walk-forward out-of-sample validation that exposes overfitting;
   - a news Sentiment agent built on an explainable finance word list;
   - portfolio mode, with historical and parametric VaR, Expected Shortfall, correlation, diversification ratio, risk contribution and sector HHI.
+- **Filings RAG agent.** It searches annual reports and earnings-call transcripts (PDF, text, Markdown or HTML) with BM25, or with BM25 plus embeddings when `FINSIGHT_EMBED_MODEL` is set. It writes its own queries, and every excerpt is cited with its document and page. Figures quoted from filings go through the same grounding check as everything else.
 - **Planner agent.** It reads the investor's question and picks which analysts to run and what the memo should focus on. A keyword planner is the fallback.
 - **Human in the loop.** With `--review` you approve, request changes or edit the memo. Edits go back through the Critic, so a human can't slip in an unsupported figure either.
 - **Runs on LangGraph** when installed, or on a small built-in state-graph engine with the same node functions.
@@ -33,7 +34,9 @@ Most "AI analyst" demos let an LLM write numbers from memory. FinSight doesn't:
                    │    └────────────┘
                    ├──▶ │   Peers    │  sector peer group, side-by-side ranking
                    │    └────────────┘
-                   └──▶ │ Sentiment  │  headline tone and trend
+                   ├──▶ │ Sentiment  │  headline tone and trend
+                   │    └────────────┘
+                   └──▶ │  Filings   │  RAG over annual reports / transcripts (when given)
                         └─────┬──────┘
                               ▼  fan-in
             ┌────────────┐
@@ -99,6 +102,7 @@ finsight analyze INFY.NS --peers TCS.NS,WIPRO.NS,HCLTECH.NS     # choose peers
 finsight analyze INFY.NS --analysts quant,peers                # run only some analysts
 finsight analyze INFY.NS --review                              # human-in-the-loop approval
 finsight portfolio "INFY.NS:40,HDFCBANK.NS:30,ITC.NS:30" --data yfinance   # portfolio risk report
+finsight analyze INFY.NS -q "What did management say about AI deals?" --filings reports/infosys_ar.pdf
 ```
 
 NSE tickers use `.NS` and BSE tickers use `.BO`. Reports are saved to `reports/<TICKER>_memo.md` and `reports/<TICKER>_trace.json`. The trace contains every agent thought, tool call and evidence item.

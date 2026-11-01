@@ -7,9 +7,13 @@ exists and every number in the memo can be traced back to some piece of evidence
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any
+
+
+_TEXT_NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 
 
 @dataclass
@@ -20,7 +24,8 @@ class Evidence:
     data: dict[str, Any]  # flat-ish key -> value payload
 
     def numbers(self) -> list[float]:
-        """All numeric values in this evidence (recursively), for grounding checks."""
+        """All numeric values in this evidence (recursively), for grounding checks. Figures inside
+        text (filing excerpts, headlines) count too, so quoting a filing can be verified."""
         out: list[float] = []
 
         def walk(v: Any) -> None:
@@ -28,6 +33,12 @@ class Evidence:
                 return
             if isinstance(v, (int, float)):
                 out.append(float(v))
+            elif isinstance(v, str):
+                for tok in _TEXT_NUM.findall(v):
+                    try:
+                        out.append(float(tok.replace(",", "")))
+                    except ValueError:
+                        pass
             elif isinstance(v, dict):
                 for x in v.values():
                     walk(x)
@@ -89,6 +100,7 @@ class AnalysisState:
     question: str = "Should a long-term investor consider this stock?"
     plan: list[str] = field(default_factory=list)  # analyst agents to run (set by the planner)
     peers: list[str] = field(default_factory=list)  # optional user-chosen peer tickers
+    filings: list[str] = field(default_factory=list)  # names of filings indexed for this run
     focus: str = ""  # what the memo should emphasise (set by the planner)
     human_rounds: int = 0  # human review rounds so far
     human_approved: bool = False

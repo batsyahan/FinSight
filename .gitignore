@@ -10,3 +10,4 @@ venv/
 .streamlit/secrets.toml
 reports/
 .DS_Store
+.finsight_cache/

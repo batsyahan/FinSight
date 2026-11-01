@@ -20,7 +20,7 @@ from finsight.graph.workflow import run_analysis
 from finsight.llm.base import LLMError
 from finsight.obs import usage_summary
 
-ICONS = {"human_review": "🙋", "planner": "🗺️ ", "researcher": "🔎", "quant": "📊", "peers": "👥", "risk": "⚠️ ", "writer": "✍️ ",
+ICONS = {"filings": "📄", "sentiment": "📰", "human_review": "🙋", "planner": "🗺️ ", "researcher": "🔎", "quant": "📊", "peers": "👥", "risk": "⚠️ ", "writer": "✍️ ",
          "critic": "🧐"}
 
 
@@ -28,7 +28,7 @@ def _on_step(name: str, state) -> None:
     detail = ""
     if name == "planner":
         detail = "analysts: " + ", ".join(state.plan)
-    elif name in ("researcher", "quant", "peers"):
+    elif name in ("researcher", "quant", "peers", "sentiment", "filings"):
         detail = f"{len(state.findings_for(name))} findings"
     elif name == "risk":
         detail = f"{len(state.risk_flags)} rule flags"
@@ -52,7 +52,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     try:
         state = run_analysis(args.ticker, args.question, settings=s, engine_name=args.engine, on_step=_on_step,
                              analysts=_csv(args.analysts), peers=_csv(args.peers),
-                             reviewer=_terminal_reviewer if args.review else None)
+                             reviewer=_terminal_reviewer if args.review else None, filings=args.filings)
     except LLMError as e:
         print(f"\nLLM error: {e}", file=sys.stderr)
         msg = str(e)
@@ -234,6 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--analysts", default=None,
                    help="comma-separated analysts to run, e.g. quant,peers (default: the planner decides)")
     a.add_argument("--peers", default=None, help="comma-separated peer tickers, e.g. TCS.NS,WIPRO.NS")
+    a.add_argument("--filings", default=None,
+                   help="annual reports / transcripts to search (pdf, txt, md, html; files or folders, comma-separated)")
     a.add_argument("--review", action="store_true",
                    help="human-in-the-loop: approve, request changes or edit the memo before it is final")
     a.add_argument("--out", default="reports")

@@ -118,7 +118,9 @@ def run_analysis(
     analysts: list[str] | None = None,
     peers: list[str] | None = None,
     reviewer: Any = None,
+    filings: Any = None,
 ) -> AnalysisState:
+    """``filings`` is a FilingsIndex, or paths (files/dirs, comma-separated) to index."""
     s = settings or Settings.from_env()
     provider = provider or get_provider(s.data)
     state = AnalysisState(ticker=ticker.strip().upper())
@@ -131,7 +133,12 @@ def run_analysis(
         state.plan = list(analysts)
     state.peers = [p.strip().upper() for p in (peers or []) if p.strip()]
     llm = instrument(llm or get_llm(s), state)
-    team = Team(llm=llm, tools=build_tools(provider, state), max_revisions=s.max_revisions, reviewer=reviewer)
+    if filings is not None and not hasattr(filings, "search"):
+        from finsight.rag.index import FilingsIndex
+
+        filings = FilingsIndex.build(filings)
+    team = Team(llm=llm, tools=build_tools(provider, state, filings), max_revisions=s.max_revisions,
+                reviewer=reviewer)
 
     choice = (engine_name or os.getenv("FINSIGHT_ENGINE", "auto")).lower()
     use_lg = choice == "langgraph" or (choice == "auto" and _langgraph_available())

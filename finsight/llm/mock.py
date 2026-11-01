@@ -9,9 +9,17 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from typing import Any
 
 from finsight.state import AnalysisState
+
+def _key_sentence(text: str) -> str:
+    """The most informative sentence of an excerpt: prefer one with a figure, skip headings."""
+    sents = [s.strip().rstrip(".") for s in re.split(r"(?<=[.!?])\s+", text) if len(s.split()) > 5]
+    with_fig = [s for s in sents if re.search(r"\d", s)]
+    return ((with_fig or sents or [text])[0])[:240]
+
 
 PLANS = {
     "researcher": [("get_company_profile", {}), ("get_fundamentals", {}), ("get_news", {"limit": 5})],
@@ -19,6 +27,8 @@ PLANS = {
               ("run_strategy_lab", {})],
     "peers": [("find_peers", {}), ("compare_peers", {})],
     "sentiment": [("score_news_sentiment", {})],
+    "filings": [("search_filings", {"query": "outlook guidance revenue growth margin"}),
+                ("search_filings", {"query": "key risks challenges"})],
 }
 
 
@@ -48,21 +58,33 @@ class MockLLM:
 
     # ---------------------------------------------------------------- ReAct agents
     def _react(self, role: str, messages: list[dict[str, str]], state: AnalysisState) -> str:
-        done = set()
+        done: Counter[str] = Counter()  # count calls, so a plan may use one tool several times
         for m in messages:
             if m["role"] == "user":
                 hit = re.match(r"(?:Observation from|Tool) (\w+)", m["content"])
                 if hit:
-                    done.add(hit.group(1))
+                    done[hit.group(1)] += 1
         for tool, args in PLANS[role]:
-            if tool not in done:
-                return json.dumps({"thought": f"I need {tool} to answer this.", "action": tool, "args": args})
+            if done[tool] > 0:
+                done[tool] -= 1
+                continue
+            return json.dumps({"thought": f"I need {tool} to answer this.", "action": tool, "args": args})
         findings = self.findings_for_role(role, state)
         return json.dumps({"thought": "I have what I need.", "final": {"findings": findings}})
 
     def findings_for_role(self, role: str, state: AnalysisState) -> list[dict[str, Any]]:
         return {"researcher": self._researcher_findings, "quant": self._quant_findings,
-                "peers": self._peer_findings, "sentiment": self._sentiment_findings}[role](state)
+                "peers": self._peer_findings, "sentiment": self._sentiment_findings,
+                "filings": self._filings_findings}[role](state)
+
+    def _filings_findings(self, s: AnalysisState) -> list[dict[str, Any]]:
+        out = []
+        for ev in s.evidence.items.values():
+            if ev.source == "search_filings" and ev.data.get("results"):
+                top = ev.data["results"][0]
+                out.append({"text": f"{top['doc']} p.{top['page']}: {_key_sentence(top['text'])}.",
+                            "citations": [ev.id]})
+        return out[:3]
 
     def _sentiment_findings(self, s: AnalysisState) -> list[dict[str, Any]]:
         ev = self._ev(s, "score_news_sentiment")
@@ -217,6 +239,17 @@ class MockLLM:
                      f"negative, a net sentiment of {d['net_sentiment']} [{sent.id}].")
             if d.get("trend"):
                 L.append(f"The tone is {d['trend']['direction']} [{sent.id}].")
+
+        excerpts = [ev for ev in s.evidence.items.values() if ev.source == "search_filings" and ev.data.get("results")]
+        if excerpts:
+            L += ["", "## From the Filings", ""]
+            seen = set()
+            for ev in excerpts:
+                top = ev.data["results"][0]
+                if (top["doc"], top["page"]) in seen or len(seen) == 3:
+                    continue
+                seen.add((top["doc"], top["page"]))
+                L.append(f"- {top['doc']}, page {top['page']}: \"{_key_sentence(top['text'])}.\" [{ev.id}]")
 
         L += ["", "## Key Risks", ""]
         if s.risk_flags and risk:

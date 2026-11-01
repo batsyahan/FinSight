@@ -75,7 +75,7 @@ class ToolRegistry:
         return {"evidence_id": ev.id, "data": data}
 
 
-def build_tools(provider: MarketDataProvider, state: AnalysisState) -> ToolRegistry:
+def build_tools(provider: MarketDataProvider, state: AnalysisState, filings: Any = None) -> ToolRegistry:
     t = state.ticker
     reg = ToolRegistry(state)
     cache: dict[str, Any] = {}
@@ -126,6 +126,15 @@ def build_tools(provider: MarketDataProvider, state: AnalysisState) -> ToolRegis
         params={"cost_bps": "int, round-trip cost per trade in basis points (default 10)",
                 "period": "price history (default 5y)"},
         title=f"{t} strategy lab"))
+
+    if filings is not None:
+        state.filings = filings.docs
+        reg.register(Tool(
+            "search_filings", "Search the company's filings (annual reports, earnings-call transcripts) and return "
+            "the most relevant excerpts with document and page number.",
+            lambda query, k=4: {"query": str(query), "results": filings.search(str(query), int(k))},
+            params={"query": "what to look for, in plain words", "k": "int, excerpts to return (default 4)"},
+            title="Filings search"))
 
     def _peer_list(tickers: str = "") -> list[str]:
         chosen = [x.strip() for x in str(tickers).split(",") if x.strip()]
