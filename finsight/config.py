@@ -8,7 +8,7 @@ from dataclasses import dataclass
 try:  # optional
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(override=True)  # the project's .env wins over stray global env vars
 except Exception:  # pragma: no cover
     pass
 

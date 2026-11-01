@@ -15,6 +15,7 @@ from pathlib import Path
 
 from finsight.config import Settings
 from finsight.graph.workflow import run_analysis
+from finsight.llm.base import LLMError
 
 ICONS = {"researcher": "🔎", "quant": "📊", "risk": "⚠️ ", "writer": "✍️ ", "critic": "🧐"}
 
@@ -40,7 +41,17 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     s = replace(s, **overrides)
     print(f"FinSight → {args.ticker.upper()}  (llm={s.llm}, data={s.data})")
     t0 = time.time()
-    state = run_analysis(args.ticker, args.question, settings=s, engine_name=args.engine, on_step=_on_step)
+    try:
+        state = run_analysis(args.ticker, args.question, settings=s, engine_name=args.engine, on_step=_on_step)
+    except LLMError as e:
+        print(f"\nLLM error: {e}", file=sys.stderr)
+        msg = str(e)
+        if "401" in msg or "403" in msg:
+            print("Hint: the API key was rejected. Check the key in .env (no quotes or spaces), that it\n"
+                  "belongs to the provider in OPENAI_BASE_URL, and that it has not been revoked.", file=sys.stderr)
+        elif "404" in msg or "model" in msg.lower():
+            print("Hint: check FINSIGHT_MODEL is a model your provider currently serves.", file=sys.stderr)
+        return 1
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
