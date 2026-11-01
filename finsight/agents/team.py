@@ -83,7 +83,7 @@ class Team:
         if state.critique.get("issues"):
             feedback = (
                 "\n\nYour previous draft was rejected. Fix every issue below and return the full corrected memo:\n- "
-                + "\n- ".join(state.critique["issues"])
+                + "\n- ".join(state.critique["issues"][:12])
                 + f"\n\nPrevious draft:\n{state.memo}"
             )
             state.revisions += 1

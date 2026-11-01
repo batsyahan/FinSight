@@ -10,6 +10,7 @@ import argparse
 import json
 import sys
 import time
+import warnings
 from dataclasses import replace
 from pathlib import Path
 
@@ -46,10 +47,14 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     except LLMError as e:
         print(f"\nLLM error: {e}", file=sys.stderr)
         msg = str(e)
-        if "401" in msg or "403" in msg:
+        if "429" in msg:
+            print("Hint: the provider's rate limit was hit even after waiting. Free tiers allow few tokens per\n"
+                  "minute; wait a minute and retry, use a smaller model, or set FINSIGHT_MAX_REVISIONS=1.",
+                  file=sys.stderr)
+        elif "401" in msg or "403" in msg:
             print("Hint: the API key was rejected. Check the key in .env (no quotes or spaces), that it\n"
                   "belongs to the provider in OPENAI_BASE_URL, and that it has not been revoked.", file=sys.stderr)
-        elif "404" in msg or "model" in msg.lower():
+        elif "404" in msg or "model_not_found" in msg:
             print("Hint: check FINSIGHT_MODEL is a model your provider currently serves.", file=sys.stderr)
         return 1
 
@@ -84,6 +89,7 @@ def _appendix(state) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")  # noisy pandas deprecations inside yfinance
     p = argparse.ArgumentParser(prog="finsight", description="Multi-agent AI equity research analyst")
     sub = p.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("analyze", help="research a ticker and write a cited memo")

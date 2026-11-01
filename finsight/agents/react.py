@@ -47,6 +47,7 @@ def run_react_agent(
     system = role_prompt.strip() + "\n\n" + PROTOCOL.format(tools=tools.describe(), max_steps=max_steps)
     messages: list[dict[str, str]] = [{"role": "user", "content": task}]
     state.log(agent, "start", task)
+    tool_successes = 0
 
     for step in range(max_steps + 2):
         force_final = step >= max_steps
@@ -62,6 +63,13 @@ def run_react_agent(
             continue
 
         if "final" in obj:
+            if tool_successes == 0 and not force_final:
+                # answering from memory is exactly what FinSight must not do
+                state.log(agent, "rejected_final", "no tool evidence yet")
+                messages.append({"role": "user", "content": (
+                    "You have not called any tool yet, so you have no evidence to cite. "
+                    "Do not answer from memory. Call a tool now.")})
+                continue
             findings = _parse_findings(agent, obj["final"], state)
             state.log(agent, "final", [f.text for f in findings])
             return findings
@@ -76,6 +84,7 @@ def run_react_agent(
         if "error" in result:
             obs = f"Tool {action} failed: {result['error']}"
         else:
+            tool_successes += 1
             obs = f"Observation from {action} (evidence {result['evidence_id']}): {to_json(result['data'])}"
         messages.append({"role": "user", "content": obs})
 
@@ -90,7 +99,9 @@ def _parse_findings(agent: str, final: Any, state: AnalysisState) -> list[Findin
         if isinstance(it, str):
             it = {"text": it, "citations": []}
         text = str(it.get("text", "")).strip()
-        cites = [c for c in it.get("citations", []) if state.evidence.get(str(c))]
-        if text:
+        cites = [str(c) for c in it.get("citations", []) if state.evidence.get(str(c))]
+        if text and cites:
             out.append(Finding(agent=agent, text=text, citations=cites))
+        elif text:
+            state.log(agent, "dropped_uncited_finding", text[:150])
     return out

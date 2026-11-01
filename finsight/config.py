@@ -22,6 +22,8 @@ class Settings:
     openai_base_url: str = "https://api.openai.com/v1"
     data: str = "sample"
     max_revisions: int = 2
+    reasoning_effort: str = ""
+    max_tokens: int = 0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -33,4 +35,6 @@ class Settings:
             openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
             data=os.getenv("FINSIGHT_DATA", "sample").strip().lower(),
             max_revisions=int(os.getenv("FINSIGHT_MAX_REVISIONS", "2")),
+            reasoning_effort=os.getenv("FINSIGHT_REASONING_EFFORT", "").strip().lower(),
+            max_tokens=int(os.getenv("FINSIGHT_MAX_TOKENS", "0") or 0),
         )

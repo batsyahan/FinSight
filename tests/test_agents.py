@@ -137,3 +137,69 @@ def test_langgraph_engine_matches_builtin():
     a = run_analysis("INFY", settings=OFFLINE, engine_name="builtin")
     b = run_analysis("INFY", settings=OFFLINE, engine_name="langgraph")
     assert a.memo == b.memo and b.approved
+
+
+# --------------------------------------------------------------------------- real-model failure modes
+class AnswersFromMemoryLLM:
+    """Tries to skip the tools and answer from memory first, like gpt-oss did on INFY.NS."""
+
+    name = "lazy"
+
+    def __init__(self):
+        self.calls = 0
+
+    def complete(self, system, messages, **kw):
+        self.calls += 1
+        if self.calls == 1:
+            return json.dumps({"final": {"findings": [{"text": "Revenue is $19bn.", "citations": []}]}})
+        if self.calls == 2:
+            return json.dumps({"action": "get_company_profile", "args": {}})
+        return json.dumps({"final": {"findings": [
+            {"text": "Profiled the company.", "citations": ["S1"]},
+            {"text": "Uncited claim from memory.", "citations": []}]}})
+
+
+def test_react_rejects_final_answer_without_tool_evidence():
+    state = AnalysisState("DEMO")
+    findings = run_react_agent(agent="researcher", role_prompt="x", task="go", llm=AnswersFromMemoryLLM(),
+                               tools=build_tools(SampleProvider(), state), state=state)
+    assert [f.text for f in findings] == ["Profiled the company."]
+    events = [t["event"] for t in state.trace]
+    assert "rejected_final" in events and "dropped_uncited_finding" in events
+
+
+def test_retry_delay_reads_provider_hints():
+    from types import SimpleNamespace
+
+    from finsight.llm.base import retry_delay
+
+    groq = SimpleNamespace(headers={}, text='{"error":{"message":"... Please try again in 22.68s. Need more"}}')
+    assert retry_delay(groq, 0) == pytest.approx(23.68)
+    assert retry_delay(SimpleNamespace(headers={"retry-after": "7"}, text=""), 0) == 8
+    assert retry_delay(SimpleNamespace(headers={}, text="try again in 1m30s"), 0) == 90  # capped
+    assert retry_delay(None, 2) == 4
+
+
+def test_openai_client_handles_rate_limit_and_reasoning_models(monkeypatch):
+    import finsight.llm.base as base
+    from finsight.llm.providers import OpenAICompatLLM
+
+    class Resp:
+        def __init__(self, code, body, text=""):
+            self.status_code, self._body, self.text, self.headers = code, body, text, {}
+
+        def json(self):
+            return self._body
+
+    sent, replies = [], [
+        Resp(429, None, "Rate limit reached. Please try again in 0.01s."),
+        Resp(200, {"choices": [{"message": {"content": '{"ok": 1}'}, "finish_reason": "stop"}]}),
+        Resp(200, {"choices": [{"message": {"content": None}, "finish_reason": "length"}]}),
+    ]
+    monkeypatch.setattr(base.requests, "post", lambda url, **kw: sent.append(kw["json"]) or replies.pop(0))
+    monkeypatch.setattr(base.time, "sleep", lambda s: None)
+    llm = OpenAICompatLLM("k", "openai/gpt-oss-120b", "https://x/v1")
+    assert llm.complete("s", [{"role": "user", "content": "hi"}]) == '{"ok": 1}'
+    assert sent[0]["reasoning_effort"] == "low" and sent[0]["max_tokens"] >= 3000
+    with pytest.raises(base.LLMError, match="finish_reason=length"):
+        llm.complete("s", [{"role": "user", "content": "hi"}])

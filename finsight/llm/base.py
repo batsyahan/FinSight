@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import time
 from typing import Any, Protocol
 
@@ -34,20 +35,44 @@ class LLMError(RuntimeError):
     pass
 
 
-def post_with_retry(url: str, headers: dict, payload: dict, timeout: int = 90, retries: int = 3) -> dict:
+_WAIT_RE = re.compile(r"try again in (?:(\d+)m)?([\d.]+)s", re.IGNORECASE)
+
+
+def retry_delay(response: "requests.Response | None", attempt: int) -> float:
+    """Seconds to wait before retrying: the server's Retry-After / message hint, else backoff."""
+    if response is not None:
+        ra = response.headers.get("retry-after")
+        try:
+            if ra:
+                return min(float(ra) + 1, 90)
+        except ValueError:
+            pass
+        m = _WAIT_RE.search(response.text or "")
+        if m:
+            return min(int(m.group(1) or 0) * 60 + float(m.group(2)) + 1, 90)
+    return float(2**attempt)
+
+
+def post_with_retry(url: str, headers: dict, payload: dict, timeout: int = 120, retries: int = 6) -> dict:
     last = None
     for attempt in range(retries):
+        resp = None
         try:
-            r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
         except requests.RequestException as e:
             last = str(e)
         else:
-            if r.status_code == 200:
-                return r.json()
-            last = f"HTTP {r.status_code}: {r.text[:300]}"
-            if r.status_code not in (408, 429, 500, 502, 503, 504, 529):
+            if resp.status_code == 200:
+                return resp.json()
+            last = f"HTTP {resp.status_code}: {resp.text[:300]}"
+            if resp.status_code not in (408, 429, 500, 502, 503, 504, 529):
                 break
-        time.sleep(2**attempt)
+        if attempt == retries - 1:
+            break
+        wait = retry_delay(resp, attempt)
+        if resp is not None and resp.status_code == 429:
+            print(f"  ⏳ rate limited by the LLM provider, waiting {wait:.0f}s...", file=sys.stderr, flush=True)
+        time.sleep(wait)
     raise LLMError(f"LLM request failed: {last}")
 
 
