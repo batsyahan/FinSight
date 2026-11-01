@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from finsight.agents import prompts
 from finsight.agents.react import _parse_findings, run_react_agent
@@ -15,8 +15,33 @@ from finsight.tools.risk import evaluate_risks, risk_score
 from finsight.verify import verify_memo
 
 
-ANALYSTS = ["researcher", "quant", "peers"]  # agents that can run in parallel after the planner
-DEFAULT_PLAN = ["researcher", "quant", "peers"]
+ANALYST_INFO = {
+    "researcher": "company profile, financial statements and recent news (what the business is and does)",
+    "quant": "price returns, volatility, drawdown, Sharpe, strategy backtest and fundamental ratios",
+    "peers": "side-by-side comparison with sector peers (relative growth, margins, valuation, returns)",
+}
+ANALYSTS = list(ANALYST_INFO)  # agents that can run in parallel after the planner
+DEFAULT_PLAN = list(ANALYSTS)
+
+# keyword fallback used when no LLM plan is available or parseable
+_KEYWORDS = {
+    "researcher": ["business", "company", "news", "management", "strategy", "product", "outlook", "what does"],
+    "quant": ["valuation", "valued", "price", "return", "risk", "volatil", "drawdown", "backtest", "momentum",
+              "cheap", "expensive", "p/e", "pe ", "growth", "margin", "debt"],
+    "peers": ["peer", "compare", "competitor", "versus", " vs", "sector", "industry", "relative", "valuation"],
+}
+
+
+def keyword_plan(question: str) -> list[str]:
+    q = f" {question.lower()} "
+    picked = [a for a, words in _KEYWORDS.items() if any(w in q for w in words)]
+    if not picked or any(w in q for w in ("should", "consider", "invest", "buy", "overall")):
+        return list(DEFAULT_PLAN)
+    if "quant" not in picked:
+        picked.append("quant")  # the risk agent needs price and ratio metrics
+    return [a for a in ANALYSTS if a in picked]
+
+ReviewFn = Callable[[AnalysisState], dict[str, Any]]
 
 
 @dataclass
@@ -24,12 +49,32 @@ class Team:
     llm: Any
     tools: ToolRegistry
     max_revisions: int = 2
+    reviewer: ReviewFn | None = None  # human-in-the-loop callback; None = fully automatic
+    max_human_rounds: int = 3
 
     # ------------------------------------------------------------------ planner
     def planner(self, state: AnalysisState) -> AnalysisState:
-        if not state.plan:
-            state.plan = list(DEFAULT_PLAN)
-        state.log("planner", "plan", {"analysts": state.plan})
+        if state.plan:  # chosen explicitly by the user
+            state.log("planner", "plan", {"analysts": state.plan, "source": "user"})
+            return state
+        menu = "\n".join(f"- {k}: {v}" for k, v in ANALYST_INFO.items())
+        source = "llm"
+        try:
+            reply = self.llm.complete(prompts.PLANNER.format(analysts=menu),
+                                      [{"role": "user", "content": f"Ticker: {state.ticker}\nQuestion: {state.question}"}],
+                                      role="planner", context=state, max_tokens=400)
+            obj = extract_json(reply)
+            plan = [a for a in ANALYSTS if a in {str(x).strip().lower() for x in obj.get("analysts", [])}]
+            state.focus = str(obj.get("focus", "")).strip()[:300]
+            reason = str(obj.get("reason", "")).strip()[:300]
+        except Exception as e:  # planning must never block the analysis
+            plan, reason = [], f"LLM plan unavailable ({type(e).__name__})"
+        if not plan:
+            plan, source = keyword_plan(state.question), "keywords"
+        if "quant" not in plan:
+            plan.append("quant")  # risk rules need price and ratio metrics
+        state.plan = [a for a in ANALYSTS if a in plan]
+        state.log("planner", "plan", {"analysts": state.plan, "focus": state.focus, "reason": reason, "source": source})
         return state
 
     def route_analysts(self, state: AnalysisState) -> list[str]:
@@ -119,7 +164,9 @@ class Team:
             )
             state.revisions += 1
         user = (
-            f"Ticker: {state.ticker}\nInvestor question: {state.question}\n\n"
+            f"Ticker: {state.ticker}\nInvestor question: {state.question}\n"
+            + (f"Planner focus: {state.focus}\n" if state.focus else "")
+            + "\n"
             f"Team findings:\n{_findings_text(state)}\n\nEvidence:\n{state.evidence.to_prompt()}{feedback}"
         )
         memo = self.llm.complete(prompts.WRITER, [{"role": "user", "content": user}], role="writer",
@@ -148,9 +195,42 @@ class Team:
         return state
 
     def route_after_critic(self, state: AnalysisState) -> str:
-        if state.approved or state.revisions >= self.max_revisions:
-            return "done"
-        return "revise"
+        if not state.approved and state.revisions < self.max_revisions:
+            return "revise"
+        if self.reviewer and state.human_rounds < self.max_human_rounds:
+            return "review"
+        return "done"
+
+    # ------------------------------------------------------------------ human in the loop
+    def human_review(self, state: AnalysisState) -> AnalysisState:
+        """Ask a human to approve, request changes, or edit the memo directly.
+
+        The reviewer returns {"action": "approve" | "revise" | "edit", "feedback": str, "memo": str}.
+        Edited memos go back through the Critic, so human edits are held to the same evidence rules.
+        """
+        state.human_rounds += 1
+        decision = self.reviewer(state) if self.reviewer else {"action": "approve"}
+        action = str(decision.get("action", "approve")).lower()
+        state.log("human", "review", {"round": state.human_rounds, "action": action,
+                                      "feedback": decision.get("feedback", "")[:300]})
+        if action == "revise" and decision.get("feedback"):
+            state.critique = {"approved": False, "issues": [f"Human reviewer: {decision['feedback']}"],
+                              "check": state.critique.get("check", {})}
+            state.approved = False
+            state.human_approved = False
+        elif action == "edit" and decision.get("memo"):
+            state.memo = str(decision["memo"]).strip()
+            state.human_approved = False
+        else:
+            state.human_approved = True
+        state.log("human", "decision", {"next": self.route_after_human(state)})
+        return state
+
+    def route_after_human(self, state: AnalysisState) -> str:
+        if state.human_approved:
+            return "approve"
+        last = next((t for t in reversed(state.trace) if t["event"] == "review" and t["agent"] == "human"), None)
+        return "recheck" if last and last["detail"]["action"] == "edit" else "revise"
 
     @staticmethod
     def _latest(source: str, state: AnalysisState) -> dict[str, Any]:

@@ -20,7 +20,7 @@ from finsight.graph.workflow import run_analysis
 from finsight.llm.base import LLMError
 from finsight.obs import usage_summary
 
-ICONS = {"planner": "🗺️ ", "researcher": "🔎", "quant": "📊", "peers": "👥", "risk": "⚠️ ", "writer": "✍️ ",
+ICONS = {"human_review": "🙋", "planner": "🗺️ ", "researcher": "🔎", "quant": "📊", "peers": "👥", "risk": "⚠️ ", "writer": "✍️ ",
          "critic": "🧐"}
 
 
@@ -34,6 +34,8 @@ def _on_step(name: str, state) -> None:
         detail = f"{len(state.risk_flags)} rule flags"
     elif name == "writer":
         detail = f"draft {state.revisions + 1} ({len(state.memo)} chars)"
+    elif name == "human_review":
+        detail = "approved by you ✅" if state.human_approved else "sent back"
     elif name == "critic":
         n = len(state.critique.get("issues", []))
         detail = "approved ✅" if state.approved else f"rejected: {n} issue(s)"
@@ -49,7 +51,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     t0 = time.time()
     try:
         state = run_analysis(args.ticker, args.question, settings=s, engine_name=args.engine, on_step=_on_step,
-                             analysts=_csv(args.analysts), peers=_csv(args.peers))
+                             analysts=_csv(args.analysts), peers=_csv(args.peers),
+                             reviewer=_terminal_reviewer if args.review else None)
     except LLMError as e:
         print(f"\nLLM error: {e}", file=sys.stderr)
         msg = str(e)
@@ -140,6 +143,27 @@ def cmd_eval_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _terminal_reviewer(state) -> dict:
+    """Human-in-the-loop review in the terminal: approve, request changes, or edit the file."""
+    verdict = "approved" if state.approved else "NOT approved"
+    print(f"\n{'=' * 70}\nHUMAN REVIEW (round {state.human_rounds}) · Critic: {verdict}")
+    for issue in state.critique.get("issues", [])[:5]:
+        print(f"  - {issue}")
+    print("=" * 70 + "\n" + state.memo + "\n" + "=" * 70)
+    while True:
+        choice = input("[a]pprove  [r]equest changes  [e]dit the memo yourself > ").strip().lower()[:1]
+        if choice == "a":
+            return {"action": "approve"}
+        if choice == "r":
+            return {"action": "revise", "feedback": input("What should change? > ").strip()}
+        if choice == "e":
+            path = Path("reports") / f"{state.ticker.replace('.', '_')}_draft.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(state.memo, encoding="utf-8")
+            input(f"Edit {path} in any editor, save it, then press Enter > ")
+            return {"action": "edit", "memo": path.read_text(encoding="utf-8")}
+
+
 def _csv(value: str | None) -> list[str] | None:
     return [x.strip() for x in value.split(",") if x.strip()] if value else None
 
@@ -166,6 +190,8 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--analysts", default=None,
                    help="comma-separated analysts to run, e.g. quant,peers (default: the planner decides)")
     a.add_argument("--peers", default=None, help="comma-separated peer tickers, e.g. TCS.NS,WIPRO.NS")
+    a.add_argument("--review", action="store_true",
+                   help="human-in-the-loop: approve, request changes or edit the memo before it is final")
     a.add_argument("--out", default="reports")
     a.add_argument("--print", action="store_true", help="also print the memo")
     a.set_defaults(func=cmd_analyze)

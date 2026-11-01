@@ -27,6 +27,13 @@ class MockLLM:
         state: AnalysisState = context
         if role in PLANS:
             return self._react(role, messages, state)
+        if role == "planner":
+            from finsight.agents.team import keyword_plan
+
+            q = messages[-1]["content"].split("Question:", 1)[-1].strip()
+            plan = keyword_plan(q)
+            return json.dumps({"analysts": plan, "focus": f"Answer the question: {q}",
+                               "reason": "keyword match on the question (offline planner)"})
         if role == "risk":
             return json.dumps({"findings": self._risk_findings(state)})
         if role == "writer":

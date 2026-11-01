@@ -89,6 +89,9 @@ class AnalysisState:
     question: str = "Should a long-term investor consider this stock?"
     plan: list[str] = field(default_factory=list)  # analyst agents to run (set by the planner)
     peers: list[str] = field(default_factory=list)  # optional user-chosen peer tickers
+    focus: str = ""  # what the memo should emphasise (set by the planner)
+    human_rounds: int = 0  # human review rounds so far
+    human_approved: bool = False
     evidence: EvidenceStore = field(default_factory=EvidenceStore)
     findings: list[Finding] = field(default_factory=list)
     risk_flags: list[dict[str, Any]] = field(default_factory=list)

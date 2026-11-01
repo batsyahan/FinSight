@@ -136,8 +136,25 @@ def test_engine_guards_against_infinite_loops():
 def test_langgraph_engine_matches_builtin():
     pytest.importorskip("langgraph")
     a = run_analysis("INFY", settings=OFFLINE, engine_name="builtin")
-    b = run_analysis("INFY", settings=OFFLINE, engine_name="langgraph")
-    assert a.memo == b.memo and b.approved
+    steps = []
+    b = run_analysis("INFY", settings=OFFLINE, engine_name="langgraph", on_step=lambda n, s: steps.append(n))
+    # parallel branches may finish in a different order, so evidence ids can differ; compare structure
+    heads = lambda m: [line for line in m.splitlines() if line.startswith("#")]  # noqa: E731
+    assert b.approved and heads(a.memo) == heads(b.memo)
+    assert sorted(e.source for e in a.evidence.items.values()) == sorted(e.source for e in b.evidence.items.values())
+    assert steps[0] == "planner" and set(steps[1:4]) == {"researcher", "quant", "peers"}
+
+
+def test_langgraph_human_review_loop():
+    pytest.importorskip("langgraph")
+    rounds = []
+
+    def reviewer(state):
+        rounds.append(1)
+        return {"action": "revise", "feedback": "Shorter summary please."} if len(rounds) == 1 else {"action": "approve"}
+
+    s = run_analysis("DEMO", settings=OFFLINE, engine_name="langgraph", reviewer=reviewer)
+    assert s.human_approved and s.human_rounds == 2 and s.revisions == 1
 
 
 # --------------------------------------------------------------------------- real-model failure modes

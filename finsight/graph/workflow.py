@@ -1,7 +1,9 @@
 """Wires the agent team into a graph:
 
     START -> planner -> (analysts in parallel) -> risk -> writer -> critic --revise--> writer
-                        researcher | quant | peers                         \\--done---> END
+                        researcher | quant | peers                          |--review--> human_review
+                                                                            \\--done----> END
+    human_review --approve--> END | --revise--> writer | --recheck (edited)--> critic
 
 The planner picks which analysts run; they fan out in parallel and fan back in at risk.
 Runs on LangGraph when installed (native fan-out), otherwise on the built-in engine.
@@ -12,7 +14,7 @@ from __future__ import annotations
 import functools
 import os
 import time
-from typing import Any, Callable
+from typing import Annotated, Any, Callable, TypedDict
 
 from finsight.agents.team import ANALYSTS, Team
 from finsight.config import Settings
@@ -24,6 +26,16 @@ from finsight.state import AnalysisState
 from finsight.tools.registry import build_tools
 
 StepCallback = Callable[[str, AnalysisState], None]
+
+
+def _same_state(_old: AnalysisState, new: AnalysisState) -> AnalysisState:
+    return new  # parallel branches all mutate and return the one shared, thread-safe state
+
+
+class GraphState(TypedDict):
+    """LangGraph state. Defined at module level: LangGraph resolves these type hints at runtime."""
+
+    s: Annotated[AnalysisState, _same_state]
 
 
 def _langgraph_available() -> bool:
@@ -51,7 +63,7 @@ def timed(name: str, fn: Callable[[AnalysisState], AnalysisState]) -> Callable[[
 
 
 def _wire(graph: Any, team: Team, start: Any, end: Any, wrap: Callable) -> None:
-    nodes = ["planner", *ANALYSTS, "risk", "writer", "critic"]
+    nodes = ["planner", *ANALYSTS, "risk", "writer", "critic", "human_review"]
     for name in nodes:
         graph.add_node(name, wrap(timed(name, getattr(team, name))))
     graph.add_edge(start, "planner")
@@ -61,7 +73,9 @@ def _wire(graph: Any, team: Team, start: Any, end: Any, wrap: Callable) -> None:
     graph.add_edge("risk", "writer")
     graph.add_edge("writer", "critic")
     graph.add_conditional_edges("critic", wrap(team.route_after_critic, router=True),
-                                {"revise": "writer", "done": end})
+                                {"revise": "writer", "review": "human_review", "done": end})
+    graph.add_conditional_edges("human_review", wrap(team.route_after_human, router=True),
+                                {"approve": end, "revise": "writer", "recheck": "critic"})
 
 
 def run_builtin(team: Team, state: AnalysisState, on_step: StepCallback | None) -> AnalysisState:
@@ -71,15 +85,7 @@ def run_builtin(team: Team, state: AnalysisState, on_step: StepCallback | None) 
 
 
 def run_langgraph(team: Team, state: AnalysisState, on_step: StepCallback | None) -> AnalysisState:
-    from typing import Annotated, TypedDict
-
     from langgraph.graph import END, START, StateGraph
-
-    def same_state(_old: AnalysisState, new: AnalysisState) -> AnalysisState:
-        return new  # parallel branches all mutate and return the one shared, thread-safe state
-
-    class GraphState(TypedDict):
-        s: Annotated[AnalysisState, same_state]
 
     def wrap(fn, router=False):
         if router:
@@ -111,6 +117,7 @@ def run_analysis(
     on_step: StepCallback | None = None,
     analysts: list[str] | None = None,
     peers: list[str] | None = None,
+    reviewer: Any = None,
 ) -> AnalysisState:
     s = settings or Settings.from_env()
     provider = provider or get_provider(s.data)
@@ -124,7 +131,7 @@ def run_analysis(
         state.plan = list(analysts)
     state.peers = [p.strip().upper() for p in (peers or []) if p.strip()]
     llm = instrument(llm or get_llm(s), state)
-    team = Team(llm=llm, tools=build_tools(provider, state), max_revisions=s.max_revisions)
+    team = Team(llm=llm, tools=build_tools(provider, state), max_revisions=s.max_revisions, reviewer=reviewer)
 
     choice = (engine_name or os.getenv("FINSIGHT_ENGINE", "auto")).lower()
     use_lg = choice == "langgraph" or (choice == "auto" and _langgraph_available())
