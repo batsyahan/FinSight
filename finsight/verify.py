@@ -25,8 +25,15 @@ CURRENCY_PATTERNS = {
     "EUR": r"€|\bEUR\b",
     "GBP": r"£|\bGBP\b",
 }
-PERIOD_LABEL_RE = re.compile(r"[- ]?(?:days?|weeks?|months?|years?|yrs?|d|w|m|y)\b", re.IGNORECASE)
-SCALES =[1, 1e2, 1e3, 1e5, 1e6, 1e7, 1e9, 1e12]  # incl. lakh (1e5) and crore (1e7)
+PERIOD_LABEL_RE = re.compile(r"[- ]?(?:days?|weeks?|months?|years?|yrs?|d|w|y)\b", re.IGNORECASE)
+# A figure may only be scaled when the memo names the unit right after it ("20.16 billion",
+# "4,117 crore"). Allowing every scale for every number made random figures match by chance.
+UNIT_SCALES = {
+    "thousand": 1e3, "k": 1e3, "lakh": 1e5, "lakhs": 1e5, "lac": 1e5,
+    "million": 1e6, "mn": 1e6, "m": 1e6, "crore": 1e7, "crores": 1e7, "cr": 1e7,
+    "billion": 1e9, "bn": 1e9, "b": 1e9, "trillion": 1e12, "tn": 1e12, "t": 1e12,
+}
+UNIT_RE = re.compile(r"\s*(" + "|".join(sorted(UNIT_SCALES, key=len, reverse=True)) + r")\b", re.IGNORECASE)
 
 
 def _parse_num(tok: str) -> float | None:
@@ -45,16 +52,16 @@ def _is_exempt(value: float, tok: str) -> bool:
     return False
 
 
-def number_supported(value: float, evidence_numbers: list[float], rel_tol: float = 0.01) -> bool:
+def number_supported(value: float, evidence_numbers: list[float], scale: float = 1.0, decimals: int = 2) -> bool:
+    """True if ``value`` (as written, in units of ``scale``) matches some evidence number to the
+    precision it was written with: one unit in the last written digit ("37.7" matches 37.6-37.8,
+    "48%" matches 47-49). This allows rounding or truncation but not nearby, unrelated figures."""
+    tol = 10.0 ** (-decimals) + 1e-9
     for ev in evidence_numbers:
-        for scale in SCALES:
-            for sign in (1, -1):  # "fell 12%" vs evidence -12.0
-                target = sign * value * scale
-                if ev == 0 and target == 0:
-                    return True
-                denom = max(abs(ev), 1e-9)
-                if abs(target - ev) / denom <= rel_tol or abs(target - ev) <= 0.011 * scale:
-                    return True
+        shown = ev / scale
+        for sign in (1, -1):  # "fell 12%" vs evidence -12.0
+            if abs(sign * value - shown) <= tol:
+                return True
     return False
 
 
@@ -94,16 +101,18 @@ def verify_memo(memo: str, evidence: EvidenceStore) -> dict[str, Any]:
             # window labels like "52-week high" or "200-day average" are not data points
             if PERIOD_LABEL_RE.match(text_wo_cites, m.end()):
                 continue
-            nums.append((tok, v))
+            unit = UNIT_RE.match(text_wo_cites, m.end())
+            decimals = len(tok.split(".")[1]) if "." in tok else 0
+            nums.append((tok, v, UNIT_SCALES[unit.group(1).lower()] if unit else 1.0, decimals))
         if not nums:
             continue
         has_cite = bool(CITE_RE.search(sent))
         if not has_cite:
             uncited += 1
             issues.append(f"Sentence with figures has no citation: \"{sent[:120]}\"")
-        for tok, v in nums:
+        for tok, v, scale, decimals in nums:
             checked += 1
-            if not number_supported(v, ev_numbers):
+            if not number_supported(v, ev_numbers, scale=scale, decimals=decimals):
                 unsupported += 1
                 issues.append(f"Figure {tok} in \"{sent[:100]}\" is not supported by any evidence.")
 

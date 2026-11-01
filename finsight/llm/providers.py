@@ -3,13 +3,26 @@
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any
 
 from finsight.config import Settings
 from finsight.llm.base import LLMError, post_with_retry
 
 
-class AnthropicLLM:
+class _UsageMixin:
+    """Remembers the token usage of the last call, per thread."""
+
+    def _set_usage(self, inp: int | None, out: int | None) -> None:
+        if not hasattr(self, "_tl"):
+            self._tl = threading.local()
+        self._tl.usage = {"input_tokens": int(inp or 0), "output_tokens": int(out or 0)}
+
+    def last_usage(self) -> dict[str, int] | None:
+        return getattr(getattr(self, "_tl", None), "usage", None)
+
+
+class AnthropicLLM(_UsageMixin):
     """Claude via the Anthropic Messages API."""
 
     name = "anthropic"
@@ -32,6 +45,8 @@ class AnthropicLLM:
                 "messages": messages,
             },
         )
+        u = data.get("usage", {})
+        self._set_usage(u.get("input_tokens"), u.get("output_tokens"))
         return "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
 
     # ---- native tool calling -------------------------------------------------
@@ -48,6 +63,8 @@ class AnthropicLLM:
             "tool_choice": {"required": {"type": "any"}, "none": {"type": "none"}}.get(tool_choice, {"type": "auto"}),
         }
         data = post_with_retry(self.URL, self._headers(), payload)
+        u = data.get("usage", {})
+        self._set_usage(u.get("input_tokens"), u.get("output_tokens"))
         blocks = data.get("content", [])
         return {
             "content": "".join(b.get("text", "") for b in blocks if b.get("type") == "text"),
@@ -60,7 +77,7 @@ class AnthropicLLM:
 
 
 
-class OpenAICompatLLM:
+class OpenAICompatLLM(_UsageMixin):
     """Any OpenAI-compatible chat completions endpoint: OpenAI, Groq, Ollama, OpenRouter, etc."""
 
     name = "openai"
@@ -119,6 +136,8 @@ class OpenAICompatLLM:
         if self.api_key:
             headers["authorization"] = f"Bearer {self.api_key}"
         data = post_with_retry(f"{self.base_url}/chat/completions", headers, payload)
+        u = data.get("usage") or {}
+        self._set_usage(u.get("prompt_tokens"), u.get("completion_tokens"))
         try:
             choice = data["choices"][0]
             return choice["message"], choice.get("finish_reason", "")

@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import functools
 import os
+import time
 from typing import Any, Callable
 
 from finsight.agents.team import Team
@@ -14,6 +16,7 @@ from finsight.config import Settings
 from finsight.data.providers import MarketDataProvider, get_provider
 from finsight.graph import engine
 from finsight.llm.providers import get_llm
+from finsight.obs import instrument
 from finsight.state import AnalysisState
 from finsight.tools.registry import build_tools
 
@@ -30,9 +33,24 @@ def _langgraph_available() -> bool:
         return False
 
 
+def timed(name: str, fn: Callable[[AnalysisState], AnalysisState]) -> Callable[[AnalysisState], AnalysisState]:
+    """Record wall time per node (summed across revisions) in state.node_seconds."""
+
+    @functools.wraps(fn)
+    def run(state: AnalysisState) -> AnalysisState:
+        t0 = time.perf_counter()
+        try:
+            return fn(state)
+        finally:
+            with state._lock:
+                state.node_seconds[name] = round(state.node_seconds.get(name, 0.0) + time.perf_counter() - t0, 3)
+
+    return run
+
+
 def _wire(graph: Any, team: Team, start: Any, end: Any, wrap: Callable) -> None:
     for name in PIPELINE:
-        graph.add_node(name, wrap(getattr(team, name)))
+        graph.add_node(name, wrap(timed(name, getattr(team, name))))
     graph.add_edge(start, "researcher")
     for a, b in zip(PIPELINE, PIPELINE[1:]):
         graph.add_edge(a, b)
@@ -84,11 +102,11 @@ def run_analysis(
     on_step: StepCallback | None = None,
 ) -> AnalysisState:
     s = settings or Settings.from_env()
-    llm = llm or get_llm(s)
     provider = provider or get_provider(s.data)
     state = AnalysisState(ticker=ticker.strip().upper())
     if question:
         state.question = question
+    llm = instrument(llm or get_llm(s), state)
     team = Team(llm=llm, tools=build_tools(provider, state), max_revisions=s.max_revisions)
 
     choice = (engine_name or os.getenv("FINSIGHT_ENGINE", "auto")).lower()

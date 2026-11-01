@@ -99,6 +99,23 @@ streamlit run app/streamlit_app.py
 
 It shows live agent progress, the memo, a price chart with the 50/200 SMAs, the evidence behind each citation, and the full agent trace.
 
+## Evaluation and observability
+
+Every LLM call is recorded per agent: tokens, latency and estimated cost. A summary is printed after each run and saved in the trace.
+
+```bash
+finsight eval --universe nifty-it --data yfinance --pause 20   # benchmark across stocks
+finsight eval-compare reports/eval_*.json                      # compare models side by side
+```
+
+Universes: `demo` (offline), `nifty-it`, `nifty-top10`, `banks`, or `--tickers A,B,C`. Each eval writes a JSON file and a Markdown report covering:
+- approval rate and first-draft approval;
+- **% of figures grounded in evidence**;
+- average revisions, failed tools, uncited findings dropped;
+- tokens, latency and cost per run.
+
+The grounding checker matches each figure to the **precision it is written with** ("37.7" must match 37.6–37.8). It only rescales a figure when a unit follows it ("20.16 billion", "4,117 crore"). The eval harness itself found that looser rules let made-up figures pass by coincidence.
+
 ## Example output
 
 - [`examples/INFY_NS_memo.md`](examples/INFY_NS_memo.md): **live run** on Infosys (NSE) with Groq `openai/gpt-oss-120b` and Yahoo Finance data. The Critic rejected the first draft with 2 issues; the Writer fixed them and the second draft was approved (about 2 minutes on Groq's free tier).

@@ -7,6 +7,7 @@ exists and every number in the memo can be traced back to some piece of evidence
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,10 +42,12 @@ class Evidence:
 @dataclass
 class EvidenceStore:
     items: dict[str, Evidence] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def add(self, source: str, title: str, data: dict[str, Any]) -> Evidence:
-        ev = Evidence(id=f"S{len(self.items) + 1}", source=source, title=title, data=data)
-        self.items[ev.id] = ev
+        with self._lock:  # agents may run in parallel branches
+            ev = Evidence(id=f"S{len(self.items) + 1}", source=source, title=title, data=data)
+            self.items[ev.id] = ev
         return ev
 
     def get(self, ev_id: str) -> Evidence | None:
@@ -93,9 +96,13 @@ class AnalysisState:
     approved: bool = False
     trace: list[dict[str, Any]] = field(default_factory=list)  # step-by-step agent log
     errors: list[str] = field(default_factory=list)
+    llm_calls: list[dict[str, Any]] = field(default_factory=list)  # telemetry: one record per LLM call
+    node_seconds: dict[str, float] = field(default_factory=dict)  # wall time per graph node
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def log(self, agent: str, event: str, detail: Any = None) -> None:
-        self.trace.append({"agent": agent, "event": event, "detail": detail})
+        with self._lock:
+            self.trace.append({"agent": agent, "event": event, "detail": detail})
 
     def findings_for(self, agent: str) -> list[Finding]:
         return [f for f in self.findings if f.agent == agent]

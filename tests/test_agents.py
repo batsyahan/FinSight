@@ -325,3 +325,12 @@ def test_verifier_flags_currency_not_in_evidence():
     ev2 = EvidenceStore()
     ev2.add("get_fundamentals", "fund", {"statement_currency": "USD", "price_currency": "INR", "eps": 75.1})
     assert verify_memo("EPS was ₹75.1 [S1].", ev2)["passed"]
+
+
+def test_verifier_only_scales_figures_with_a_unit_word():
+    ev = EvidenceStore()
+    ev.add("get_fundamentals", "fund", {"revenue": 377_000_000_000.0})
+    assert verify_memo("Revenue was 37,700 crore [S1].", ev)["passed"]
+    assert verify_memo("Revenue was 377 billion [S1].", ev)["passed"]
+    # without a unit, 37.7 must not match 3.77e11 by silently scaling it
+    assert not verify_memo("Targets imply 37.7% upside [S1].", ev)["passed"]
