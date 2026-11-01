@@ -15,10 +15,10 @@ OFFLINE = Settings(llm="mock", data="sample", max_revisions=2)
 def test_telemetry_records_every_llm_call_per_agent():
     state = run_analysis("DEMO", settings=OFFLINE, engine_name="builtin")
     s = usage_summary(state)
-    assert set(s["per_agent"]) == {"planner", "researcher", "quant", "peers", "risk", "writer", "critic"}
+    assert set(s["per_agent"]) == {"planner", "researcher", "quant", "peers", "sentiment", "risk", "writer", "critic"}
     assert s["totals"]["llm_calls"] == len(state.llm_calls) > 0
     assert s["totals"]["tokens_estimated"] is True  # the mock reports no usage
-    assert set(s["node_seconds"]) == {"planner", "researcher", "quant", "peers", "risk", "writer", "critic"}
+    assert set(s["node_seconds"]) == {"planner", "researcher", "quant", "peers", "sentiment", "risk", "writer", "critic"}
 
 
 def test_telemetry_uses_provider_token_counts_and_prices(monkeypatch):

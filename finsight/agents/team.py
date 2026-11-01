@@ -19,6 +19,7 @@ ANALYST_INFO = {
     "researcher": "company profile, financial statements and recent news (what the business is and does)",
     "quant": "price returns, volatility, drawdown, Sharpe, strategy backtest and fundamental ratios",
     "peers": "side-by-side comparison with sector peers (relative growth, margins, valuation, returns)",
+    "sentiment": "tone of recent news headlines and whether it is improving or worsening",
 }
 ANALYSTS = list(ANALYST_INFO)  # agents that can run in parallel after the planner
 DEFAULT_PLAN = list(ANALYSTS)
@@ -29,6 +30,7 @@ _KEYWORDS = {
     "quant": ["valuation", "valued", "price", "return", "risk", "volatil", "drawdown", "backtest", "momentum",
               "cheap", "expensive", "p/e", "pe ", "growth", "margin", "debt"],
     "peers": ["peer", "compare", "competitor", "versus", " vs", "sector", "industry", "relative", "valuation"],
+    "sentiment": ["sentiment", "news", "headline", "mood", "market think", "perception", "media"],
 }
 
 
@@ -110,6 +112,21 @@ class Team:
         state.add_findings(findings)
         return state
 
+    # ------------------------------------------------------------------ sentiment
+    def sentiment(self, state: AnalysisState) -> AnalysisState:
+        findings = run_react_agent(
+            agent="sentiment",
+            role_prompt=prompts.SENTIMENT,
+            task=f"Assess the tone of recent news about {state.ticker}.",
+            llm=self.llm,
+            tools=self.tools.subset(["score_news_sentiment"]),
+            state=state,
+            max_steps=2,
+            seed=[("score_news_sentiment", {})],
+        )
+        state.add_findings(findings)
+        return state
+
     # ------------------------------------------------------------------ quant
     def quant(self, state: AnalysisState) -> AnalysisState:
         findings = run_react_agent(
@@ -117,10 +134,11 @@ class Team:
             role_prompt=prompts.QUANT,
             task=f"Analyse {state.ticker} quantitatively.",
             llm=self.llm,
-            tools=self.tools.subset(["get_price_stats", "run_backtest", "compute_ratios"]),
+            tools=self.tools.subset(["get_price_stats", "run_backtest", "compute_ratios", "run_strategy_lab"]),
             state=state,
             max_steps=5,
-            seed=[("get_price_stats", {"period": "2y"}), ("run_backtest", {}), ("compute_ratios", {})],
+            seed=[("get_price_stats", {"period": "2y"}), ("run_backtest", {}), ("compute_ratios", {}),
+                  ("run_strategy_lab", {})],
         )
         state.add_findings(findings)
         return state
@@ -128,6 +146,8 @@ class Team:
     # ------------------------------------------------------------------ risk
     def risk(self, state: AnalysisState) -> AnalysisState:
         metrics = self._latest("get_price_stats", state) | self._latest("compute_ratios", state)
+        if (sent := self._latest("score_news_sentiment", state)).get("headlines"):
+            metrics["net_sentiment"] = sent["net_sentiment"]
         if not metrics:  # quant failed: fetch what the rules need directly
             for name in ("get_price_stats", "compute_ratios"):
                 res = self.tools.call(name)

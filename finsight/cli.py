@@ -164,6 +164,50 @@ def _terminal_reviewer(state) -> dict:
             return {"action": "edit", "memo": path.read_text(encoding="utf-8")}
 
 
+def cmd_portfolio(args: argparse.Namespace) -> int:
+    from finsight.data.providers import get_provider
+    from finsight.llm.providers import get_llm
+    from finsight.portfolio import analyze_portfolio, parse_holdings, portfolio_markdown, portfolio_summary
+
+    s = Settings.from_env()
+    s = replace(s, **{k: v for k, v in {"llm": args.llm, "model": args.model, "data": args.data}.items() if v})
+    holdings = parse_holdings(args.holdings)
+    print(f"Portfolio: {', '.join(f'{t} {w:.0%}' for t, w in holdings.items())}  (llm={s.llm}, data={s.data})")
+    analysis = analyze_portfolio(holdings, get_provider(s.data), period=args.period, value=args.value)
+    m, v = analysis["metrics"], analysis["var_1d_95"]
+    print(f"  return {m['total_return_pct']}% · vol {m['ann_volatility_pct']}% · Sharpe {m['sharpe']} · "
+          f"max DD {m['max_drawdown_pct']}%")
+    print(f"  1-day VaR 95%: {v['historical_var_pct']}% (≈ {v['historical_var_amount']:,.0f} on "
+          f"{args.value:,.0f}) · ES {v['expected_shortfall_pct']}% · avg corr {m['avg_pairwise_correlation']}")
+    for f in analysis["flags"]:
+        print(f"  ⚠️  {f['message']}")
+    summary = None
+    try:
+        summary = portfolio_summary(analysis, get_llm(s))
+        print(f"  ✍️  summary {'grounded ✅' if summary['grounding']['passed'] else 'NOT fully grounded ❌'} "
+              f"after {summary['attempts']} attempt(s)")
+    except LLMError as e:
+        print(f"  (no LLM summary: {e})")
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    md = portfolio_markdown(analysis, summary)
+    if args.memos:
+        md += "\n## Holding memos\n\n"
+        for t in holdings:
+            print(f"  📝 memo for {t} ...", flush=True)
+            st = run_analysis(t, settings=s, engine_name=args.engine)
+            path = out / f"{t.replace('.', '_')}_memo.md"
+            path.write_text(st.memo + _appendix(st), encoding="utf-8")
+            md += f"- [{t}]({path.name}): {'approved' if st.approved else 'not approved'}\n"
+    (out / "portfolio.md").write_text(md, encoding="utf-8")
+    (out / "portfolio.json").write_text(json.dumps({"analysis": analysis, "summary": summary}, indent=2,
+                                                   default=str), encoding="utf-8")
+    print(f"\nReport: {out / 'portfolio.md'}")
+    if args.print:
+        print("\n" + md)
+    return 0
+
+
 def _csv(value: str | None) -> list[str] | None:
     return [x.strip() for x in value.split(",") if x.strip()] if value else None
 
@@ -208,6 +252,19 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--pause", type=float, default=0.0, help="seconds between tickers (helps free tiers)")
     e.add_argument("--out", default="reports")
     e.set_defaults(func=cmd_eval)
+
+    pf = sub.add_parser("portfolio", help="portfolio risk report: VaR, correlation, concentration")
+    pf.add_argument("holdings", help='e.g. "INFY.NS:40,HDFCBANK.NS:30,ITC.NS:30" (no weights = equal weight)')
+    pf.add_argument("--value", type=float, default=1_000_000, help="portfolio value for VaR amounts")
+    pf.add_argument("--period", default="2y")
+    pf.add_argument("--memos", action="store_true", help="also write a full memo for each holding")
+    pf.add_argument("--llm", choices=["mock", "anthropic", "openai"], default=None)
+    pf.add_argument("--model", default=None)
+    pf.add_argument("--data", choices=["sample", "yfinance"], default=None)
+    pf.add_argument("--engine", choices=["auto", "langgraph", "builtin"], default=None)
+    pf.add_argument("--out", default="reports")
+    pf.add_argument("--print", action="store_true")
+    pf.set_defaults(func=cmd_portfolio)
 
     c = sub.add_parser("eval-compare", help="compare saved eval results across models")
     c.add_argument("files", nargs="+", help="eval_*.json files")

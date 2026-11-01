@@ -15,6 +15,10 @@ Most "AI analyst" demos let an LLM write numbers from memory. FinSight doesn't:
 - **The Critic verifies, not just reviews.** A deterministic checker extracts every figure in the draft and matches it against the evidence (handling rounding, signs and crore/billion scaling). It also rejects unknown citations and numeric sentences with no citation. Then an LLM review covers balance and tone. Rejected drafts go back to the Writer with the exact issues.
 - **Native tool calling, with tools required first.** For Claude and OpenAI-compatible APIs the agents use the API's own tool calling, and the first turn sets `tool_choice=required`. The model cannot answer from memory before it has evidence. Models without tool calling fall back to a JSON ReAct protocol.
 - **Provider-agnostic.** It works with Claude, any OpenAI-compatible API (OpenAI, Groq, Ollama, OpenRouter), or a deterministic offline mode that needs no API key.
+- **Fintech depth:**
+  - a strategy lab (SMA, momentum, RSI and Bollinger) backtested net of costs, with walk-forward out-of-sample validation that exposes overfitting;
+  - a news Sentiment agent built on an explainable finance word list;
+  - portfolio mode, with historical and parametric VaR, Expected Shortfall, correlation, diversification ratio, risk contribution and sector HHI.
 - **Planner agent.** It reads the investor's question and picks which analysts to run and what the memo should focus on. A keyword planner is the fallback.
 - **Human in the loop.** With `--review` you approve, request changes or edit the memo. Edits go back through the Critic, so a human can't slip in an unsupported figure either.
 - **Runs on LangGraph** when installed, or on a small built-in state-graph engine with the same node functions.
@@ -25,9 +29,11 @@ Most "AI analyst" demos let an LLM write numbers from memory. FinSight doesn't:
                         ┌────────────┐
                    ┌──▶ │ Researcher │  profile, financial statements, news
                    │    └────────────┘
- ticker ─▶ Planner ┼──▶ │   Quant    │  price stats, SMA backtest, ratios        (parallel)
+ ticker ─▶ Planner ┼──▶ │   Quant    │  price stats, ratios, strategy lab        (parallel)
                    │    └────────────┘
-                   └──▶ │   Peers    │  sector peer group, side-by-side ranking
+                   ├──▶ │   Peers    │  sector peer group, side-by-side ranking
+                   │    └────────────┘
+                   └──▶ │ Sentiment  │  headline tone and trend
                         └─────┬──────┘
                               ▼  fan-in
             ┌────────────┐
@@ -92,6 +98,7 @@ finsight analyze RELIANCE.NS --data yfinance --llm anthropic
 finsight analyze INFY.NS --peers TCS.NS,WIPRO.NS,HCLTECH.NS     # choose peers
 finsight analyze INFY.NS --analysts quant,peers                # run only some analysts
 finsight analyze INFY.NS --review                              # human-in-the-loop approval
+finsight portfolio "INFY.NS:40,HDFCBANK.NS:30,ITC.NS:30" --data yfinance   # portfolio risk report
 ```
 
 NSE tickers use `.NS` and BSE tickers use `.BO`. Reports are saved to `reports/<TICKER>_memo.md` and `reports/<TICKER>_trace.json`. The trace contains every agent thought, tool call and evidence item.

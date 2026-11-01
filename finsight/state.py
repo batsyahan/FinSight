@@ -56,7 +56,7 @@ class EvidenceStore:
     def all_numbers(self) -> list[float]:
         return [n for ev in self.items.values() for n in ev.numbers()]
 
-    def to_prompt(self, max_chars: int = 6000) -> str:
+    def to_prompt(self, max_chars: int = 14000) -> str:
         """Compact text form of the evidence for LLM prompts."""
         lines = []
         for ev in self.items.values():
@@ -70,8 +70,8 @@ def _compact(data: dict[str, Any]) -> str:
     for k, v in data.items():
         if isinstance(v, float):
             v = round(v, 4)
-        if isinstance(v, (list, dict)) and len(str(v)) > 300:
-            v = str(v)[:300] + "..."
+        if isinstance(v, (list, dict)) and len(str(v)) > 1500:
+            v = str(v)[:1500] + "..."
         parts.append(f"{k}={v}")
     return "; ".join(parts)
 

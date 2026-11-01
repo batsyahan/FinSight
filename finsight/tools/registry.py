@@ -14,6 +14,8 @@ from finsight.data.providers import MarketDataProvider
 from finsight.state import AnalysisState
 from finsight.tools.peers import compare_peers, find_peers
 from finsight.tools.quant import fundamental_ratios, price_stats, sma_crossover_backtest
+from finsight.tools.sentiment import news_sentiment
+from finsight.tools.strategies import strategy_lab
 
 
 @dataclass
@@ -111,6 +113,19 @@ def build_tools(provider: MarketDataProvider, state: AnalysisState) -> ToolRegis
     reg.register(Tool(
         "compute_ratios", "Growth, margins, ROE, debt/equity, current ratio and P/E from fundamentals.",
         lambda: fundamental_ratios(fundamentals()), title=f"{t} fundamental ratios"))
+
+    reg.register(Tool(
+        "score_news_sentiment", "Score recent headlines positive/negative/neutral with a finance word list; "
+        "returns net sentiment and its trend.",
+        lambda limit=10: news_sentiment(provider.news(t, int(limit))),
+        params={"limit": "int, headlines to score (default 10)"}, title=f"{t} news sentiment"))
+    reg.register(Tool(
+        "run_strategy_lab", "Backtest SMA crossover, momentum, RSI and Bollinger strategies net of costs, with "
+        "walk-forward (out-of-sample) validation, versus buy-and-hold.",
+        lambda cost_bps=10, period="5y": strategy_lab(prices(period), float(cost_bps)),
+        params={"cost_bps": "int, round-trip cost per trade in basis points (default 10)",
+                "period": "price history (default 5y)"},
+        title=f"{t} strategy lab"))
 
     def _peer_list(tickers: str = "") -> list[str]:
         chosen = [x.strip() for x in str(tickers).split(",") if x.strip()]

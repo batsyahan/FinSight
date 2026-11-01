@@ -9,10 +9,10 @@ OFFLINE = Settings(llm="mock", data="sample", max_revisions=2)
 
 
 def test_keyword_plan_picks_analysts_for_the_question():
-    assert keyword_plan("Should a long-term investor consider this stock?") == ["researcher", "quant", "peers"]
+    assert keyword_plan("Should a long-term investor consider this stock?") == ["researcher", "quant", "peers", "sentiment"]
     assert keyword_plan("How volatile has it been and what was the drawdown?") == ["quant"]
     assert keyword_plan("How does it compare with competitors?") == ["quant", "peers"]
-    assert keyword_plan("What does the business do and any recent news?") == ["researcher", "quant"]
+    assert keyword_plan("What does the business do and any recent news?") == ["researcher", "quant", "sentiment"]
 
 
 def test_planner_drives_which_agents_run():

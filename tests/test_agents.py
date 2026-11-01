@@ -79,8 +79,8 @@ def test_react_loop_recovers_from_bad_json_and_unknown_tools():
 def test_offline_pipeline_produces_approved_cited_memo():
     steps = []
     state = run_analysis("DEMO", settings=OFFLINE, engine_name="builtin", on_step=lambda n, s: steps.append(n))
-    assert steps[0] == "planner" and set(steps[1:4]) == {"researcher", "quant", "peers"}
-    assert steps[4:] == ["risk", "writer", "critic"]
+    assert steps[0] == "planner" and set(steps[1:5]) == {"researcher", "quant", "peers", "sentiment"}
+    assert steps[5:] == ["risk", "writer", "critic"]
     assert state.approved and state.revisions == 0
     assert "## Key Risks" in state.memo and "[S" in state.memo
     assert "SYNTHETIC" in state.memo
@@ -142,7 +142,7 @@ def test_langgraph_engine_matches_builtin():
     heads = lambda m: [line for line in m.splitlines() if line.startswith("#")]  # noqa: E731
     assert b.approved and heads(a.memo) == heads(b.memo)
     assert sorted(e.source for e in a.evidence.items.values()) == sorted(e.source for e in b.evidence.items.values())
-    assert steps[0] == "planner" and set(steps[1:4]) == {"researcher", "quant", "peers"}
+    assert steps[0] == "planner" and set(steps[1:5]) == {"researcher", "quant", "peers", "sentiment"}
 
 
 def test_langgraph_human_review_loop():
@@ -252,10 +252,10 @@ def test_native_loop_seeds_core_evidence_and_drops_memory_claims():
                          on_step=lambda n, s: steps.append((n, len(s.evidence.items))))
     sources = [ev.source for ev in state.evidence.items.values()]
     assert {"get_company_profile", "get_price_stats", "compare_peers"} <= set(sources)
-    assert llm.calls == 3  # one LLM call per ReAct agent (researcher, quant, peers)
+    assert llm.calls == 4  # one LLM call per ReAct agent (researcher, quant, peers, sentiment)
     assert state.approved and all("From memory" not in f.text for f in state.findings)
     seeded = [t for t in state.trace if t["event"] == "tool" and t["detail"]["seeded"]]
-    assert len(seeded) == 8  # 3 researcher + 3 quant + 2 peers
+    assert len(seeded) == 10  # 3 researcher + 4 quant + 2 peers + 1 sentiment
 
 
 class TextAnswerMock(MockLLM):
@@ -263,6 +263,7 @@ class TextAnswerMock(MockLLM):
 
     def chat_tools(self, system, messages, tools, *, tool_choice="auto", role="", context=None, max_tokens=1500):
         ids = [m["content"].split()[1] for m in messages if m["role"] == "tool"]
+        ids = ids + ids[:1] * (2 - len(ids)) if len(ids) < 2 else ids
         return {"content": "**Findings**\n\n"
                            f"1. **Profile** – company profiled from data [{ids[0]}]\n"
                            f"2. Price and fundamentals reviewed ({ids[1]}, {ids[-1]})\n"

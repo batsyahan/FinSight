@@ -2,8 +2,8 @@
 
 Rules:
 1. Every citation like [S3] or [S1, S4] must refer to evidence that exists.
-2. Every number in the memo body must match some number in the evidence
-   (allowing rounding and unit scaling such as crore/billion).
+2. Every number in a sentence must match a number in the evidence *that sentence cites*,
+   to the precision written (unit words such as crore/billion allow scaling).
 3. Every sentence that contains a number must carry at least one citation.
 
 Headings, years, small counters and window labels ("52-week") are exempt. This is what makes FinSight's
@@ -106,14 +106,26 @@ def verify_memo(memo: str, evidence: EvidenceStore) -> dict[str, Any]:
             nums.append((tok, v, UNIT_SCALES[unit.group(1).lower()] if unit else 1.0, decimals))
         if not nums:
             continue
-        has_cite = bool(CITE_RE.search(sent))
-        if not has_cite:
+        sent_ids = [c for grp in CITE_RE.findall(sent) for c in re.split(r"\s*,\s*", grp)]
+        scoped = [evidence.get(c) for c in sent_ids if evidence.get(c) is not None]
+        if not sent_ids:
             uncited += 1
             issues.append(f"Sentence with figures has no citation: \"{sent[:120]}\"")
+        # Citation-scoped grounding: a figure must appear in the evidence its own sentence cites.
+        # (Matching against all evidence lets random figures pass by coincidence as evidence grows.)
+        scope_numbers = [n for ev in scoped for n in ev.numbers()] if scoped else ev_numbers
         for tok, v, scale, decimals in nums:
             checked += 1
-            if not number_supported(v, ev_numbers, scale=scale, decimals=decimals):
-                unsupported += 1
+            if number_supported(v, scope_numbers, scale=scale, decimals=decimals):
+                continue
+            unsupported += 1
+            elsewhere = [ev.id for ev in evidence.items.values()
+                         if number_supported(v, ev.numbers(), scale=scale, decimals=decimals)]
+            if scoped and elsewhere:
+                issues.append(f"Figure {tok} in \"{sent[:100]}\" is not in the cited evidence "
+                              f"[{', '.join(e.id for e in scoped)}]; it appears in [{', '.join(elsewhere[:3])}]. "
+                              "Fix the citation.")
+            else:
                 issues.append(f"Figure {tok} in \"{sent[:100]}\" is not supported by any evidence.")
 
     # currency sanity: a currency used in the memo must be one the evidence actually reports

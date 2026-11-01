@@ -15,8 +15,10 @@ from finsight.state import AnalysisState
 
 PLANS = {
     "researcher": [("get_company_profile", {}), ("get_fundamentals", {}), ("get_news", {"limit": 5})],
-    "quant": [("get_price_stats", {"period": "2y"}), ("run_backtest", {"fast": 50, "slow": 200}), ("compute_ratios", {})],
+    "quant": [("get_price_stats", {"period": "2y"}), ("run_backtest", {"fast": 50, "slow": 200}), ("compute_ratios", {}),
+              ("run_strategy_lab", {})],
     "peers": [("find_peers", {}), ("compare_peers", {})],
+    "sentiment": [("score_news_sentiment", {})],
 }
 
 
@@ -34,6 +36,8 @@ class MockLLM:
             plan = keyword_plan(q)
             return json.dumps({"analysts": plan, "focus": f"Answer the question: {q}",
                                "reason": "keyword match on the question (offline planner)"})
+        if role == "portfolio":
+            return self._portfolio_summary(context)
         if role == "risk":
             return json.dumps({"findings": self._risk_findings(state)})
         if role == "writer":
@@ -58,7 +62,18 @@ class MockLLM:
 
     def findings_for_role(self, role: str, state: AnalysisState) -> list[dict[str, Any]]:
         return {"researcher": self._researcher_findings, "quant": self._quant_findings,
-                "peers": self._peer_findings}[role](state)
+                "peers": self._peer_findings, "sentiment": self._sentiment_findings}[role](state)
+
+    def _sentiment_findings(self, s: AnalysisState) -> list[dict[str, Any]]:
+        ev = self._ev(s, "score_news_sentiment")
+        if not ev or not ev.data.get("headlines"):
+            return []
+        d = ev.data
+        out = [{"text": f"Net sentiment {d['net_sentiment']} across {d['headlines']} headlines "
+                        f"({d['positive']} positive, {d['negative']} negative).", "citations": [ev.id]}]
+        if d.get("trend"):
+            out.append({"text": f"Tone is {d['trend']['direction']}.", "citations": [ev.id]})
+        return out
 
     def _peer_findings(self, s: AnalysisState) -> list[dict[str, Any]]:
         ev = self._ev(s, "compare_peers")
@@ -174,6 +189,14 @@ class MockLLM:
                      f"{d['buy_hold_return_pct']}% for buy-and-hold, spending {d['time_in_market_pct']}% of days "
                      f"invested [{bt.id}].")
 
+        lab = e("run_strategy_lab")
+        if lab and lab.data.get("best_out_of_sample"):
+            best = lab.data["best_out_of_sample"]
+            wf = lab.data["walk_forward"][best]
+            L.append(f"In walk-forward testing net of {lab.data['cost_bps']} bps costs, the best strategy out of sample "
+                     f"was {best.replace('_', ' ')}, with an out-of-sample Sharpe of {wf['out_of_sample_sharpe']} versus "
+                     f"{wf['in_sample_sharpe']} in sample [{lab.id}].")
+
         peers = e("compare_peers")
         if peers and peers.data.get("vs_peers"):
             L += ["", "## Peer Comparison", ""]
@@ -185,6 +208,15 @@ class MockLLM:
                 if v:
                     L.append(f"- {label}: {v['subject']} vs peer median {v['peer_median']}, rank {v['rank']} "
                              f"of {v['out_of']} [{peers.id}].")
+
+        sent = e("score_news_sentiment")
+        if sent and sent.data.get("headlines"):
+            d = sent.data
+            L += ["", "## News Sentiment", ""]
+            L.append(f"Across {d['headlines']} recent headlines, {d['positive']} read positive and {d['negative']} "
+                     f"negative, a net sentiment of {d['net_sentiment']} [{sent.id}].")
+            if d.get("trend"):
+                L.append(f"The tone is {d['trend']['direction']} [{sent.id}].")
 
         L += ["", "## Key Risks", ""]
         if s.risk_flags and risk:
@@ -214,3 +246,23 @@ class MockLLM:
             except json.JSONDecodeError:
                 pass
         return json.dumps({"approved": passed, "issues": [] if passed else ["Fix the automated check issues."]})
+
+    # ---------------------------------------------------------------- portfolio
+    @staticmethod
+    def _portfolio_summary(ctx: dict[str, Any]) -> str:
+        a = ctx["analysis"]
+        m, v = a["metrics"], a["var_1d_95"]
+        top = max(a["holdings"].items(), key=lambda kv: kv[1]["risk_contribution_pct"])
+        L = ["## Overview", "",
+             f"Over the period the portfolio returned {m['total_return_pct']}% with a Sharpe ratio of {m['sharpe']} [S1].",
+             "", "## Risk", "",
+             f"Annualised volatility was {m['ann_volatility_pct']}% and the maximum drawdown was {m['max_drawdown_pct']}% [S1].",
+             f"On a typical bad day (95% confidence), the portfolio could lose about {v['historical_var_pct']}% in one day, "
+             f"and {v['expected_shortfall_pct']}% on average beyond that threshold [S2].",
+             "", "## Diversification", "",
+             f"The average pairwise correlation is {m['avg_pairwise_correlation']} [S1].",
+             f"{top[0]} contributes {top[1]['risk_contribution_pct']}% of portfolio risk [S3].",
+             "", "## Flags", ""]
+        L += [f"- {f['message']} [S4]" for f in a["flags"]] or ["No portfolio risk flags were raised [S4]."]
+        L += ["", "## Disclaimer", "", "Educational analysis only, not financial advice."]
+        return "\n".join(L)

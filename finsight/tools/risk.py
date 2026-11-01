@@ -36,6 +36,8 @@ RULES: list[RiskRule] = [
              "The stock fell more than 35% from a peak within the period."),
     RiskRule("rich_valuation", "pe_ratio", lambda v: v > 60, "> 60", 60, "low",
              "P/E above 60 prices in a lot of future growth."),
+    RiskRule("negative_news_sentiment", "net_sentiment", lambda v: v <= -0.3, "<= -0.3", -0.3, "medium",
+             "Recent news flow is clearly negative."),
     RiskRule("poor_risk_adjusted_return", "sharpe", lambda v: v < 0, "< 0", 0, "low",
              "Returns did not beat the risk-free rate after adjusting for risk."),
 ]
