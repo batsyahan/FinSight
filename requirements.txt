@@ -1,0 +1,2 @@
+# Used by Streamlit Community Cloud / Hugging Face Spaces to install the app.
+.[ui,market,langgraph,rag,pdf]

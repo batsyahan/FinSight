@@ -7,7 +7,7 @@ WORKDIR /app
 # install dependencies first so code edits don't bust the dependency layer
 COPY pyproject.toml README.md ./
 COPY finsight/__init__.py finsight/__init__.py
-RUN pip install ".[api,market,langgraph,rag,redis,ui]"
+RUN pip install ".[api,market,langgraph,rag,redis,ui,pdf]"
 
 COPY finsight ./finsight
 COPY app ./app

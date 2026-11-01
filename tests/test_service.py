@@ -133,7 +133,18 @@ def test_rest_api_end_to_end(monkeypatch):
     assert c.post(f"/jobs/{jid}/review", json={"action": "approve"}, headers=h).json()["accepted"] == "approve"
     api.manager.wait(jid)
     body = c.get(f"/jobs/{jid}", headers=h).json()
-    assert body["status"] == "done" and body["result"]["approved"] and body["result"]["ticker"] == "DEMO"
+    assert body["status"] == "done", body["error"]
+    assert body["result"]["approved"] and body["result"]["ticker"] == "DEMO"
     assert c.get("/jobs/nope", headers=h).status_code == 404
     pf = c.post("/portfolio", json={"holdings": "DEMO:50,ACME:50"}, headers=h).json()
     assert pf["analysis"]["var_1d_95"]["historical_var_pct"] > 0
+
+
+def test_review_payload_with_nulls_as_sent_by_the_api():
+    """The REST API sends {"action": "approve", "feedback": null, "memo": null}; CI caught a crash on this."""
+    jm = JobManager(offline_runner, workers=1)
+    job = jm.submit("analyze", {"ticker": "DEMO", "question": None, "analysts": None, "peers": None, "review": True})
+    jm.wait(job.id, until=("awaiting_review",))
+    jm.submit_review(job.id, {"action": "approve", "feedback": None, "memo": None})
+    done = jm.wait(job.id)
+    assert done.status == "done", done.error

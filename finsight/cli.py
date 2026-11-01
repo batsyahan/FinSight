@@ -72,6 +72,15 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     stem = state.ticker.replace(".", "_")
     memo_path = out / f"{stem}_memo.md"
     memo_path.write_text(state.memo + _appendix(state), encoding="utf-8")
+    for fmt in _csv(args.export) or []:
+        from finsight.export import export
+
+        try:
+            content, ext = export(state, fmt.lower())
+            (out / f"{stem}_memo.{ext}").write_bytes(content)
+            print(f"Exported: {out / f'{stem}_memo.{ext}'}")
+        except RuntimeError as e:
+            print(f"Export {fmt} skipped: {e}", file=sys.stderr)
     trace_path = out / f"{stem}_trace.json"
     trace_path.write_text(json.dumps({
         "ticker": state.ticker, "approved": state.approved, "revisions": state.revisions,
@@ -271,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
                    help="annual reports / transcripts to search (pdf, txt, md, html; files or folders, comma-separated)")
     a.add_argument("--review", action="store_true",
                    help="human-in-the-loop: approve, request changes or edit the memo before it is final")
+    a.add_argument("--export", default=None, help="also export the memo: html, pdf (comma-separated)")
     a.add_argument("--out", default="reports")
     a.add_argument("--print", action="store_true", help="also print the memo")
     a.set_defaults(func=cmd_analyze)

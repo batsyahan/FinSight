@@ -1,205 +1,181 @@
 # FinSight 📈
 
 ![CI](https://github.com/batsyahan/FinSight/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-**A multi-agent AI financial analyst.** Give it a stock ticker and a team of AI agents researches the company, runs quantitative analysis, flags risks, and writes an investment memo. Every figure in the memo is cited, and a Critic agent checks each one against the evidence before the memo is approved.
+**A multi-agent AI equity analyst that has to show its work.** You give it a stock and a question. A Planner assembles a team of agents (Researcher, Quant, Peers, Sentiment, Filings), which run in parallel and gather evidence through tools. A Writer drafts an investment memo, and a Critic **verifies every figure against the evidence its sentence cites** before the memo is approved.
 
-> Educational project. FinSight's output is research, not financial advice.
+> Educational project: FinSight produces research, not financial advice.
 
-## Why it's interesting
+| | |
+|---|---|
+| 🧠 **Agentic** | Planner → parallel analysts → Risk → Writer ⇄ Critic loop, with optional human-in-the-loop review. Runs on LangGraph. |
+| 🔎 **Grounded** | Every figure must match the evidence its sentence cites, to the precision written. Made-up figures get rejected. |
+| 📊 **Fintech depth** | Strategy lab with walk-forward validation, peer ranking, news sentiment, portfolio VaR/CVaR, filings RAG. |
+| 🛡️ **Safe** | Prompt-injection redaction on all tool data, no personal buy/sell advice, input validation. |
+| 📏 **Measured** | Evaluation harness (approval rate, % grounded figures) plus per-agent tokens, latency and cost. |
+| 🚀 **Shippable** | CLI, Streamlit UI, REST API with job queue, Docker Compose with Redis, scheduled watchlist alerts, CI. |
 
-Most "AI analyst" demos let an LLM write numbers from memory. FinSight doesn't:
+**Example memo from a live run:** [Infosys (NSE)](examples/INFY_NS_memo.md), using Groq `gpt-oss-120b` and Yahoo Finance data. The Critic rejected the first draft and approved the second.
 
-- **Tools do the maths, agents do the reasoning.** Returns, volatility, Sharpe, drawdown, backtests and ratios come from tested Python functions, never from the model.
-- **Every tool result becomes citable evidence** (`S1`, `S2`, …). The Writer must cite them.
-- **The Critic verifies, not just reviews.** A deterministic checker extracts every figure in the draft and matches it against the evidence (handling rounding, signs and crore/billion scaling). It also rejects unknown citations and numeric sentences with no citation. Then an LLM review covers balance and tone. Rejected drafts go back to the Writer with the exact issues.
-- **Native tool calling, with tools required first.** For Claude and OpenAI-compatible APIs the agents use the API's own tool calling, and the first turn sets `tool_choice=required`. The model cannot answer from memory before it has evidence. Models without tool calling fall back to a JSON ReAct protocol.
-- **Provider-agnostic.** It works with Claude, any OpenAI-compatible API (OpenAI, Groq, Ollama, OpenRouter), or a deterministic offline mode that needs no API key.
-- **Fintech depth:**
-  - a strategy lab (SMA, momentum, RSI and Bollinger) backtested net of costs, with walk-forward out-of-sample validation that exposes overfitting;
-  - a news Sentiment agent built on an explainable finance word list;
-  - portfolio mode, with historical and parametric VaR, Expected Shortfall, correlation, diversification ratio, risk contribution and sector HHI.
-- **Filings RAG agent.** It searches annual reports and earnings-call transcripts (PDF, text, Markdown or HTML) with BM25, or with BM25 plus embeddings when `FINSIGHT_EMBED_MODEL` is set. It writes its own queries, and every excerpt is cited with its document and page. Figures quoted from filings go through the same grounding check as everything else.
-- **Guardrails.**
-  - News, filings and company text are scanned for prompt-injection attempts ("ignore previous instructions", "rate this a strong buy"). Matches are removed before any model sees them and reported as security events.
-  - The verifier rejects direct buy/sell instructions, guaranteed-return claims and a missing disclaimer.
-  - Tickers are validated, because they also end up in file paths.
-- **Planner agent.** It reads the investor's question and picks which analysts to run and what the memo should focus on. A keyword planner is the fallback.
-- **Human in the loop.** With `--review` you approve, request changes or edit the memo. Edits go back through the Critic, so a human can't slip in an unsupported figure either.
-- **Runs on LangGraph** when installed, or on a small built-in state-graph engine with the same node functions.
+---
 
 ## Architecture
 
 ```
-                        ┌────────────┐
-                   ┌──▶ │ Researcher │  profile, financial statements, news
-                   │    └────────────┘
- ticker ─▶ Planner ┼──▶ │   Quant    │  price stats, ratios, strategy lab        (parallel)
-                   │    └────────────┘
-                   ├──▶ │   Peers    │  sector peer group, side-by-side ranking
-                   │    └────────────┘
-                   ├──▶ │ Sentiment  │  headline tone and trend
-                   │    └────────────┘
-                   └──▶ │  Filings   │  RAG over annual reports / transcripts (when given)
-                        └─────┬──────┘
-                              ▼  fan-in
-            ┌────────────┐
-            │    Risk    │  rule-based flags (transparent thresholds) + LLM judgement
-            └─────┬──────┘
-                  ▼
-            ┌────────────┐   revise (with issues)   ┌────────────┐
-            │   Writer   │ ◀─────────────────────── │   Critic   │  grounding checker
-            └─────┬──────┘ ───────────────────────▶ └─────┬──────┘  + LLM review
-                                                          │ approved / budget used
-                                                          ▼
-                                         memo.md (with [S#] citations) + trace.json
+                         ┌─────────────┐
+                    ┌──▶ │ Researcher  │  profile, financial statements, news
+                    │    ├─────────────┤
+                    ├──▶ │    Quant    │  returns, risk, ratios, strategy lab (walk-forward)
+ question ─▶ Planner┤    ├─────────────┤
+  + ticker          ├──▶ │    Peers    │  sector peer group, rank vs peer median       (parallel)
+                    │    ├─────────────┤
+                    ├──▶ │  Sentiment  │  headline tone and trend
+                    │    ├─────────────┤
+                    └──▶ │   Filings   │  RAG over annual reports / transcripts
+                         └──────┬──────┘
+                                ▼ fan-in
+                         ┌─────────────┐
+                         │    Risk     │  transparent rule flags + LLM judgement
+                         └──────┬──────┘
+                                ▼
+                         ┌─────────────┐  revise with exact issues   ┌─────────────┐
+                         │   Writer    │ ◀───────────────────────── │   Critic    │ grounding checker
+                         └──────┬──────┘ ─────────────────────────▶ └──────┬──────┘ + LLM review
+                                                                           │
+                                               optional human review ◀─────┘ (approve / revise / edit)
+                                                                           ▼
+                                                     memo (md / html / pdf) + trace.json
 ```
 
-| Layer | Files |
-|---|---|
-| Shared state and evidence store | `finsight/state.py` |
-| Market data (yfinance, offline sample) | `finsight/data/providers.py` |
-| Quant and risk tools, tool registry | `finsight/tools/` |
-| LLM clients (Anthropic, OpenAI-compatible, mock) | `finsight/llm/` |
-| ReAct loop, prompts, the five agents | `finsight/agents/` |
-| Grounding checker | `finsight/verify.py` |
-| Graph (LangGraph or built-in) | `finsight/graph/` |
-| CLI and Streamlit UI | `finsight/cli.py`, `app/streamlit_app.py` |
+### What makes it different
+
+1. **Tools do the maths, agents do the reasoning.** Returns, Sharpe, drawdown, backtests, ratios, VaR and peer ranks come from tested Python functions, never from the model.
+2. **Every tool result is citable evidence** (`S1`, `S2`, …). A finding without a valid citation is dropped.
+3. **Citation-scoped grounding.** A figure has to appear in the evidence *its own sentence cites*, to the precision written ("37.7" matches 37.6–37.8). It only rescales a figure when a unit word follows it ("20.16 billion", "4,117 crore"). When a figure sits in a different evidence item, the Critic says so: "it appears in S5; fix the citation".
+4. **Robust agent loop.** API-native tool calling with a `submit_findings` tool. Core tools are run up front, so weaker models can't skip them. Malformed provider output (Groq `tool_use_failed`) is recovered instead of crashing.
+5. **Provider-agnostic.** Works with Claude, any OpenAI-compatible API (OpenAI, Groq, Ollama, OpenRouter), or a deterministic offline mode that needs no API key.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/batsyahan/FinSight.git
-cd FinSight
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+git clone https://github.com/batsyahan/FinSight.git && cd FinSight
+python -m venv .venv && source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[all]"
-
-# 1. Offline demo: no API key, synthetic data
-finsight analyze DEMO --print
+finsight analyze DEMO --print                            # offline: synthetic data, no API key
 ```
 
-### Real data and a real model
+Real data and a real model: `cp .env.example .env`, then set for example:
 
 ```bash
-cp .env.example .env   # then edit it
+FINSIGHT_LLM=openai
+OPENAI_BASE_URL=https://api.groq.com/openai/v1           # free tier; or OpenAI, Ollama (localhost:11434/v1)...
+OPENAI_API_KEY=gsk_...
+FINSIGHT_MODEL=openai/gpt-oss-120b
+FINSIGHT_DATA=yfinance
 ```
 
-**Claude**
-```bash
-FINSIGHT_LLM=anthropic  ANTHROPIC_API_KEY=sk-ant-...  FINSIGHT_DATA=yfinance
-```
-
-**Groq (free tier) or any OpenAI-compatible API**
-```bash
-FINSIGHT_LLM=openai  OPENAI_BASE_URL=https://api.groq.com/openai/v1  OPENAI_API_KEY=gsk_...  FINSIGHT_MODEL=<model name>
-```
-
-**Ollama (fully local)**
-```bash
-FINSIGHT_LLM=openai  OPENAI_BASE_URL=http://localhost:11434/v1  FINSIGHT_MODEL=llama3.1
-```
+## Usage
 
 ```bash
 finsight analyze INFY.NS -q "Is the valuation justified by growth?"
-finsight analyze RELIANCE.NS --data yfinance --llm anthropic
-finsight analyze INFY.NS --peers TCS.NS,WIPRO.NS,HCLTECH.NS     # choose peers
-finsight analyze INFY.NS --analysts quant,peers                # run only some analysts
-finsight analyze INFY.NS --review                              # human-in-the-loop approval
-finsight portfolio "INFY.NS:40,HDFCBANK.NS:30,ITC.NS:30" --data yfinance   # portfolio risk report
+finsight analyze INFY.NS --peers TCS.NS,WIPRO.NS,HCLTECH.NS             # choose the peer group
+finsight analyze INFY.NS --analysts quant,peers                         # skip the Planner
 finsight analyze INFY.NS -q "What did management say about AI deals?" --filings reports/infosys_ar.pdf
+finsight analyze INFY.NS --review                                       # approve / request changes / edit
+finsight analyze INFY.NS --export html,pdf                              # hover-citation HTML, PDF
+finsight portfolio "INFY.NS:40,HDFCBANK.NS:30,ITC.NS:30" --memos        # portfolio risk + memo per holding
+finsight watch --file watchlist.txt --webhook https://hooks.slack.com/... # daily alerts
+finsight eval --universe nifty-it --pause 20                            # benchmark
+finsight eval-compare reports/eval_*.json                               # compare models
+streamlit run app/streamlit_app.py                                      # web UI
+uvicorn finsight.api:app --port 8000                                    # REST API (docs at /docs)
+docker compose up --build                                               # API + UI + Redis
 ```
 
-NSE tickers use `.NS` and BSE tickers use `.BO`. Reports are saved to `reports/<TICKER>_memo.md` and `reports/<TICKER>_trace.json`. The trace contains every agent thought, tool call and evidence item.
+NSE tickers end in `.NS`, BSE in `.BO`. Every run writes `reports/<TICKER>_memo.md` and a `_trace.json` with every agent step, tool call, evidence item, token count and guardrail event.
 
-### Web UI
+## Features
 
-```bash
-streamlit run app/streamlit_app.py
-```
-
-It shows live agent progress, the memo, a price chart with the 50/200 SMAs, the evidence behind each citation, and the full agent trace.
-
-## Run as a service
-
-```bash
-pip install -e ".[api]"
-uvicorn finsight.api:app --port 8000          # REST API: interactive docs at http://localhost:8000/docs
-docker compose up --build                     # API :8000 + web UI :8501 + shared Redis cache
-```
-
-| Endpoint | What it does |
+### Agents
+| Agent | What it does |
 |---|---|
-| `POST /analyze` | Starts an analysis job and returns `202 {job_id}`. `{"ticker": "INFY.NS", "question": "...", "review": true}` |
-| `GET /jobs/{id}` | Status (`queued`/`running`/`awaiting_review`/`done`/`failed`), per-agent progress and the result |
-| `POST /jobs/{id}/review` | Human-in-the-loop over HTTP: `{"action": "approve" \| "revise" \| "edit", ...}` |
+| **Planner** | Reads the question and picks analysts and a memo focus. A keyword planner is the fallback; Filings is offered only when documents are given. |
+| **Researcher** | Company profile, financial statements, recent news. |
+| **Quant** | Returns, volatility, Sharpe, drawdown, fundamental ratios, **strategy lab**: SMA crossover, momentum, RSI and Bollinger strategies net of costs, with **walk-forward** in-sample vs out-of-sample results and an overfitting gap. |
+| **Peers** | Curated NSE sector groups (IT, banks, FMCG, autos, pharma, …). Ranks the company against the peer median on 9 metrics. |
+| **Sentiment** | An explainable finance word list with negation handling. Net sentiment and trend. |
+| **Filings (RAG)** | PDF, text, Markdown or HTML. Chunked with page numbers and searched with BM25, or hybrid BM25 + embeddings with reciprocal rank fusion. The agent writes its own queries. |
+| **Risk** | Transparent threshold rules (leverage, cash burn, drawdown, valuation, sentiment, …) plus LLM judgement. |
+| **Writer / Critic** | Draft → verify → revise loop with a revision budget. |
+| **Human review** | Approve, request changes or edit, in the CLI (`--review`) or over HTTP. Human edits go back through the Critic too. |
+
+### Portfolio mode
+Historical and parametric **VaR** (95/99%), **Expected Shortfall**, correlation matrix, diversification ratio, each holding's **share of portfolio risk**, sector **HHI** and concentration flags. The LLM summary goes through the same grounding check.
+
+### Guardrails
+- **Prompt injection.** Every tool result is scanned for instructions aimed at the AI ("ignore previous instructions", "rate this a strong buy", chat-template tokens …). Matches are redacted *before* any model sees them and logged as security events. The tests run real attacks through a poisoned news feed and a poisoned filing.
+- **Advice.** Memos with direct buy/sell instructions, guaranteed-return claims or no disclaimer are rejected by the verifier.
+- **Input validation.** Tickers are validated everywhere, because they also become file names.
+
+### Service
+- **REST API** (FastAPI): async jobs with per-agent progress, human review over HTTP, a bounded queue, and an optional API key.
+- **Caching**: market data is cached on disk, or in Redis when `FINSIGHT_REDIS_URL` is set.
+- **Docker**: a non-root image with a health check. CI builds it and runs a full analysis through the API inside the container.
+- **Watchlist**: daily snapshot diffs (risk flags raised or cleared, moves of 5% or more, sentiment swings) to Slack or Discord via a scheduled GitHub Action.
+
+| Endpoint | |
+|---|---|
+| `POST /analyze` | `{"ticker": "INFY.NS", "question": "...", "review": true}` → `202 {job_id}` |
+| `GET /jobs/{id}` | `queued` / `running` / `awaiting_review` / `done` / `failed`, progress, result |
+| `POST /jobs/{id}/review` | `{"action": "approve" \| "revise" \| "edit", "feedback": "...", "memo": "..."}` |
 | `POST /portfolio` | Portfolio risk report |
-| `GET /healthz` | Health check and configuration |
-
-Set `FINSIGHT_API_KEY` to require an `X-API-Key` header. Market data is cached (in files, or in Redis when `FINSIGHT_REDIS_URL` is set). CI builds the Docker image and smoke-tests the API inside the container.
-
-### Watchlist alerts
-
-```bash
-finsight watch --file watchlist.txt --data yfinance --webhook https://hooks.slack.com/...
-```
-
-This takes a cheap snapshot of each stock (no LLM calls) and compares it with the previous run. It alerts on new or cleared risk flags, price moves of 5% or more and sentiment swings. `.github/workflows/watchlist.yml` runs it on weekdays after NSE close. Add a `FINSIGHT_WEBHOOK_URL` repository secret to receive the alerts in Slack or Discord.
+| `GET /healthz` | Health and configuration |
 
 ## Evaluation and observability
 
-Every LLM call is recorded per agent: tokens, latency and estimated cost. A summary is printed after each run and saved in the trace.
-
-```bash
-finsight eval --universe nifty-it --data yfinance --pause 20   # benchmark across stocks
-finsight eval-compare reports/eval_*.json                      # compare models side by side
-```
-
-Universes: `demo` (offline), `nifty-it`, `nifty-top10`, `banks`, or `--tickers A,B,C`. Each eval writes a JSON file and a Markdown report covering:
-- approval rate and first-draft approval;
-- **% of figures grounded in evidence**;
-- average revisions, failed tools, uncited findings dropped;
-- tokens, latency and cost per run.
-
-The grounding checker matches each figure to the **precision it is written with** ("37.7" must match 37.6–37.8). It only rescales a figure when a unit follows it ("20.16 billion", "4,117 crore"). The eval harness itself found that looser rules let made-up figures pass by coincidence.
-
-## Example output
-
-- [`examples/INFY_NS_memo.md`](examples/INFY_NS_memo.md): **live run** on Infosys (NSE) with Groq `openai/gpt-oss-120b` and Yahoo Finance data. The Critic rejected the first draft with 2 issues; the Writer fixed them and the second draft was approved (about 2 minutes on Groq's free tier).
-- [`examples/DEMO_memo.md`](examples/DEMO_memo.md): offline run with synthetic data and the mock model.
+`finsight eval` runs FinSight over a stock universe (`demo`, `nifty-it`, `nifty-top10`, `banks` or `--tickers`). It reports Critic approval rate, first-draft approval, **% of figures grounded in cited evidence**, average revisions, failed tools, uncited findings dropped, and tokens, latency and cost per run. Use `eval-compare` to put several models side by side. Every LLM call is recorded per agent; set `FINSIGHT_PRICE_IN` and `FINSIGHT_PRICE_OUT` for cost estimates.
 
 ## Lessons from live runs
 
-Running on a real model exposed failure modes that the offline tests didn't. Each now has a regression test:
+Running on a real model and on the eval harness exposed failure modes that unit tests didn't. Each now has a regression test:
 
-| Seen on `gpt-oss-120b` (Groq) | Fix |
+| Observed | Fix |
 |---|---|
-| Answered from memory, 0 tool calls | Core tools run first; uncited findings dropped |
-| Called a non-existent `JSON` tool (HTTP 400) | `submit_findings` tool, and the model's text is recovered from `failed_generation` |
-| Wrote text when a tool call was required | Findings accepted as a tool call, JSON or a cited bullet list |
-| Spent its output budget reasoning | `reasoning_effort=low` and a token floor for reasoning models |
+| `gpt-oss-120b` answered from memory with 0 tool calls | Core tools run first; uncited findings dropped |
+| Model called a non-existent `JSON` tool (HTTP 400) | `submit_findings` tool, and the model's text is recovered from `failed_generation` |
+| Model wrote text when a tool call was required | Findings accepted as a tool call, JSON or a cited bullet list |
+| Reasoning model used its whole output budget | `reasoning_effort=low` and a token floor for reasoning models |
 | Free-tier 429 rate limits | Waits for the provider's "try again in Xs" |
 | `52‑week` with a Unicode hyphen failed the checker | Dashes normalised before verification |
-| Mixed "$" and INR for one figure | Separate statement and price currencies; currency check |
-| (eval harness) made-up figures matched other figures by coincidence | Figures must match the evidence their own sentence cites, to the precision written |
+| "$" and INR mixed for the same figure | Separate statement and price currencies; currency check |
+| Eval: made-up figures matched other figures by coincidence | Precision-based matching, then **citation-scoped** grounding |
+| CI: LangGraph couldn't resolve a type declared inside a function | Graph state type moved to module level |
+| CI: API sent `"feedback": null` on approve and crashed the job | Null-safe review handling plus a test with the exact API payload |
 
-## Tests
+## Project layout
 
-```bash
-pytest
-```
+| Path | Contents |
+|---|---|
+| `finsight/agents/` | Planner, analysts, Risk, Writer, Critic, human review; ReAct loop (native tool calling and JSON fallback); prompts |
+| `finsight/tools/` | Quant, strategy lab, peers, sentiment, risk rules; tool registry (evidence + guardrails) |
+| `finsight/graph/` | Workflow wiring; LangGraph backend; built-in engine with parallel fan-out |
+| `finsight/verify.py` | Citation-scoped grounding checker |
+| `finsight/rag/` | Filings loaders, chunking, BM25 / hybrid retrieval, cache |
+| `finsight/llm/` | Anthropic and OpenAI-compatible clients over HTTP, offline mock |
+| `finsight/data/` | Yahoo Finance and synthetic providers, cache (file / Redis) |
+| `finsight/portfolio.py`, `watch.py`, `eval.py`, `obs.py`, `guardrails.py`, `export.py` | Portfolio risk, alerts, benchmark, telemetry, safety, HTML/PDF |
+| `finsight/api.py`, `jobs.py` | REST API and job manager |
+| `app/streamlit_app.py` | Web UI: live agent graph, hover citations, peers, strategy lab, portfolio, eval |
 
-The tests cover the quant maths, risk rules, the evidence registry, the grounding checker, the ReAct loop's recovery from bad JSON and unknown tools, and the full graph. The revision-loop test uses a model that makes up a figure in its first draft. The Critic must reject that draft and the Writer must fix it. CI runs the suite with and without LangGraph on Python 3.10 and 3.12.
+## Tests and CI
 
-## Roadmap
+There are 80+ tests: quant maths (with a no-look-ahead check), grounding rules, ReAct recovery, parallel execution timing, planner and human review flows, RAG (including a hand-built PDF), injection attacks, the job manager, the REST API, export escaping (XSS), and the Streamlit app run headless. CI runs them on Python 3.10 and 3.12, with and without optional dependencies. It also builds the Docker image and smoke-tests the API inside the container.
 
-- [x] Scaffold, config, shared state and evidence store
-- [x] Market data layer and quant/risk tools
-- [x] Agents, ReAct loop, Writer↔Critic graph with grounding checks
-- [x] CLI, Streamlit UI, CI
-- [ ] Peer comparison agent (compare against sector peers)
-- [ ] Parallel Researcher/Quant branches in LangGraph
-- [ ] Filings RAG (annual reports, concall transcripts) as an evidence source
-- [ ] Evaluation set: score memos for groundedness across many tickers
+## Deploy
+
+See [docs/DEPLOY.md](docs/DEPLOY.md) for Streamlit Community Cloud (free), Docker Compose, Hugging Face Spaces, or any container host.
 
 ## License
 

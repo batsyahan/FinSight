@@ -259,7 +259,7 @@ class Team:
         decision = self.reviewer(state) if self.reviewer else {"action": "approve"}
         action = str(decision.get("action", "approve")).lower()
         state.log("human", "review", {"round": state.human_rounds, "action": action,
-                                      "feedback": decision.get("feedback", "")[:300]})
+                                      "feedback": str(decision.get("feedback") or "")[:300]})
         if action == "revise" and decision.get("feedback"):
             state.critique = {"approved": False, "issues": [f"Human reviewer: {decision['feedback']}"],
                               "check": state.critique.get("check", {})}
