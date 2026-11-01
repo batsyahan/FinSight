@@ -214,8 +214,8 @@ def test_verifier_normalises_unicode_dashes():
 
 # --------------------------------------------------------------------------- native tool calling
 class NativeMock(MockLLM):
-    """Speaks the native tool-calling interface. Like gpt-oss, it would happily answer from memory
-    whenever it is *allowed* to (tool_choice != "required"), so the loop must force tools first."""
+    """Speaks the native tool-calling interface and, like gpt-oss, first tries to submit an
+    answer from memory. Finishes via the submit_findings tool."""
 
     def __init__(self):
         self.choices = []
@@ -224,16 +224,18 @@ class NativeMock(MockLLM):
         from finsight.llm.mock import PLANS
 
         self.choices.append((role, tool_choice))
-        done = {m["name"] for m in messages if m["role"] == "tool"}
-        if tool_choice != "required" and not done:
-            return {"content": json.dumps({"findings": [{"text": "From memory: revenue $19bn.", "citations": []}]}),
-                    "tool_calls": []}
+        names = {s["name"] for s in tools}
+        done = {m["name"] for m in messages if m["role"] == "tool" and m["name"] != "submit_findings"}
+        tried_memory = any(m["role"] == "tool" and m["name"] == "submit_findings" for m in messages)
+        if not done and not tried_memory:
+            return {"content": "", "tool_calls": [{"id": "m1", "name": "submit_findings", "args": {
+                "findings": [{"text": "From memory: revenue $19bn.", "citations": []}]}}]}
         todo = [(n, a) for n, a in PLANS[role] if n not in done]
-        if todo and tool_choice != "none":
+        if todo and todo[0][0] in names:
             n, a = todo[0]
             return {"content": "", "tool_calls": [{"id": f"call_{n}", "name": n, "args": a}]}
-        findings = self._researcher_findings(context) if role == "researcher" else self._quant_findings(context)
-        return {"content": json.dumps({"findings": findings}), "tool_calls": []}
+        f = self._researcher_findings(context) if role == "researcher" else self._quant_findings(context)
+        return {"content": "", "tool_calls": [{"id": "done", "name": "submit_findings", "args": {"findings": f}}]}
 
 
 def test_native_loop_forces_tools_before_answering():
@@ -241,9 +243,27 @@ def test_native_loop_forces_tools_before_answering():
     steps = []
     state = run_analysis("INFY", llm=llm, settings=OFFLINE, engine_name="builtin",
                          on_step=lambda n, s: steps.append((n, len(s.evidence.items))))
-    assert llm.choices[0] == ("researcher", "required")
+    assert all(choice == "required" for _, choice in llm.choices)
     assert dict(steps)["researcher"] == 3 and dict(steps)["quant"] == 6
     assert state.approved and all("From memory" not in f.text for f in state.findings)
+    assert sum(t["event"] == "rejected_final" for t in state.trace) == 2  # once per ReAct agent
+
+
+def test_native_loop_recovers_from_invented_tool_name():
+    """Groq returns HTTP 400 tool_use_failed when gpt-oss calls a tool like 'JSON'."""
+    from finsight.llm.base import LLMError
+
+    class InventsToolOnce(NativeMock):
+        def chat_tools(self, *a, **kw):
+            if not getattr(self, "failed", False):
+                self.failed = True
+                raise LLMError('LLM request failed: HTTP 400: {"error":{"code":"tool_use_failed",'
+                               '"message":"attempted to call tool \'JSON\' which was not in request.tools"}}')
+            return super().chat_tools(*a, **kw)
+
+    state = run_analysis("INFY", llm=InventsToolOnce(), settings=OFFLINE, engine_name="builtin")
+    assert state.approved
+    assert any(t["event"] == "provider_rejected_call" for t in state.trace)
 
 
 def test_openai_chat_tools_round_trip(monkeypatch):
