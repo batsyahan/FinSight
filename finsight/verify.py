@@ -57,8 +57,13 @@ def split_sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+_DASHES = str.maketrans({"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-",
+                         "\u2212": "-", "\u00a0": " ", "\u202f": " "})
+
+
 def verify_memo(memo: str, evidence: EvidenceStore) -> dict[str, Any]:
     issues: list[str] = []
+    memo = memo.translate(_DASHES)  # models often emit non-breaking hyphens ("52\u2011week") and minus signs
     ev_numbers = evidence.all_numbers()
     # Headings are skipped; every other line is checked, including the disclaimer,
     # so figures cannot be slipped in below a heading that looks exempt.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import warnings
@@ -70,6 +71,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         "evidence": {k: {"source": v.source, "title": v.title, "data": v.data} for k, v in state.evidence.items.items()},
     }, indent=2, default=str), encoding="utf-8")
 
+    failed = [t["detail"] for t in state.trace
+              if t["event"] == "tool" and not re.fullmatch(r"S\d+", str(t["detail"].get("result", "")))]
+    if failed:
+        print("\nTool calls that failed:")
+        for d in failed:
+            print(f"  - {d.get('tool')}: {d.get('result')}")
     status = "APPROVED" if state.approved else "NOT APPROVED (best draft saved)"
     print(f"\n{status} after {state.revisions} revision(s) in {time.time() - t0:.1f}s")
     print(f"Memo:  {memo_path}\nTrace: {trace_path}")
@@ -89,7 +96,7 @@ def _appendix(state) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")  # noisy pandas deprecations inside yfinance
+    warnings.filterwarnings("ignore", message=r".*inplace keyword.*")  # pandas deprecations raised inside yfinance
     p = argparse.ArgumentParser(prog="finsight", description="Multi-agent AI equity research analyst")
     sub = p.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("analyze", help="research a ticker and write a cited memo")

@@ -203,3 +203,10 @@ def test_openai_client_handles_rate_limit_and_reasoning_models(monkeypatch):
     assert sent[0]["reasoning_effort"] == "low" and sent[0]["max_tokens"] >= 3000
     with pytest.raises(base.LLMError, match="finish_reason=length"):
         llm.complete("s", [{"role": "user", "content": "hi"}])
+
+
+def test_verifier_normalises_unicode_dashes():
+    ev = EvidenceStore()
+    ev.add("get_price_stats", "stats", {"high_52w": 1654.01, "return_total_pct": -30.83})
+    memo = "The 52‑week high was 1654.01 and the 2‑year return was −30.83% [S1]."
+    assert verify_memo(memo, ev)["passed"]

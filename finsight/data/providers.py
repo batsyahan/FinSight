@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import warnings
 from datetime import date, timedelta
 from typing import Any, Protocol
 
@@ -160,6 +161,8 @@ class YFinanceProvider:
             raise RuntimeError("yfinance is not installed: pip install 'finsight[market]'") from e
         self._yf = yf
         self._cache: dict[str, Any] = {}
+        # yfinance triggers pandas "inplace keyword" deprecation warnings; they are not ours to fix
+        warnings.filterwarnings("ignore", message=r".*inplace keyword.*")
 
     def _t(self, ticker: str):
         if ticker not in self._cache:
