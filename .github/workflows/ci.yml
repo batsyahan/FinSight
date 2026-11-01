@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+        extras: ["dev", "all"]  # core only, and with LangGraph + yfinance + Streamlit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: pip install -e ".[${{ matrix.extras }}]"
+      - name: Tests
+        run: pytest -rs
+      - name: Offline end-to-end demo
+        env:
+          FINSIGHT_LLM: mock
+          FINSIGHT_DATA: sample
+        run: finsight analyze DEMO --out reports
+      - uses: actions/upload-artifact@v4
+        if: matrix.extras == 'all' && matrix.python-version == '3.12'
+        with:
+          name: demo-report
+          path: reports/
