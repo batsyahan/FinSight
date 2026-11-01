@@ -212,6 +212,32 @@ def cmd_portfolio(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_watch(args: argparse.Namespace) -> int:
+    import os
+
+    from finsight.data.providers import get_provider
+    from finsight.watch import alerts_markdown, post_webhook, run_watch
+
+    tickers = _csv(args.tickers) or []
+    if args.file:
+        tickers += [ln.split("#")[0].strip() for ln in Path(args.file).read_text(encoding="utf-8").splitlines()
+                    if ln.split("#")[0].strip()]
+    if not tickers:
+        print("Give tickers (INFY.NS,TCS.NS) or --file watchlist.txt", file=sys.stderr)
+        return 2
+    data = args.data or Settings.from_env().data
+    result = run_watch(tickers, get_provider(data), args.state, move_pct=args.move)
+    md = alerts_markdown(result)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "watchlist.md").write_text(md, encoding="utf-8")
+    print(md)
+    hook = args.webhook or os.getenv("FINSIGHT_WEBHOOK_URL", "")
+    if hook:
+        print("Webhook:", "sent" if post_webhook(hook, result) else "nothing to send")
+    return 0
+
+
 def _csv(value: str | None) -> list[str] | None:
     return [x.strip() for x in value.split(",") if x.strip()] if value else None
 
@@ -274,6 +300,16 @@ def main(argv: list[str] | None = None) -> int:
     pf.add_argument("--out", default="reports")
     pf.add_argument("--print", action="store_true")
     pf.set_defaults(func=cmd_portfolio)
+
+    w = sub.add_parser("watch", help="daily watchlist alerts: new/cleared risk flags, big moves, sentiment swings")
+    w.add_argument("tickers", nargs="?", default=None, help="comma-separated tickers")
+    w.add_argument("--file", default=None, help="watchlist file, one ticker per line")
+    w.add_argument("--state", default="reports/watch_state.json", help="where the last snapshot is kept")
+    w.add_argument("--move", type=float, default=5.0, help="price move %% that triggers an alert")
+    w.add_argument("--data", choices=["sample", "yfinance"], default=None)
+    w.add_argument("--webhook", default=None, help="Slack/Discord webhook URL (or FINSIGHT_WEBHOOK_URL)")
+    w.add_argument("--out", default="reports")
+    w.set_defaults(func=cmd_watch)
 
     c = sub.add_parser("eval-compare", help="compare saved eval results across models")
     c.add_argument("files", nargs="+", help="eval_*.json files")

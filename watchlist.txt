@@ -1,0 +1,6 @@
+# One ticker per line. Used by `finsight watch --file watchlist.txt` and the scheduled workflow.
+INFY.NS
+TCS.NS
+HDFCBANK.NS
+RELIANCE.NS
+ITC.NS

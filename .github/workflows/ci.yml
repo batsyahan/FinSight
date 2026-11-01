@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.12"]
-        extras: ["dev", "all"]  # core only, and with LangGraph + yfinance + Streamlit
+        extras: ["dev", "all"]  # core only, and with LangGraph, yfinance, Streamlit, pypdf, FastAPI
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,9 +25,31 @@ jobs:
         env:
           FINSIGHT_LLM: mock
           FINSIGHT_DATA: sample
-        run: finsight analyze DEMO --out reports
+        run: |
+          finsight analyze DEMO --out reports
+          finsight eval --universe demo --out reports
+          finsight portfolio "DEMO:40,ACME:30,GLOBEX:30" --out reports
       - uses: actions/upload-artifact@v4
         if: matrix.extras == 'all' && matrix.python-version == '3.12'
         with:
-          name: demo-report
+          name: demo-reports
           path: reports/
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t finsight:ci .
+      - name: Smoke test the API inside the container
+        run: |
+          docker run -d --name fs -p 8000:8000 -e FINSIGHT_LLM=mock -e FINSIGHT_DATA=sample finsight:ci
+          for i in $(seq 1 30); do curl -sf localhost:8000/healthz && break; sleep 1; done
+          job=$(curl -sf -X POST localhost:8000/analyze -H 'content-type: application/json' -d '{"ticker":"DEMO"}' | python -c "import sys,json;print(json.load(sys.stdin)['job_id'])")
+          for i in $(seq 1 60); do
+            s=$(curl -sf localhost:8000/jobs/$job | python -c "import sys,json;print(json.load(sys.stdin)['status'])")
+            [ "$s" = done ] && break; [ "$s" = failed ] && { curl -s localhost:8000/jobs/$job; exit 1; }; sleep 1
+          done
+          curl -sf localhost:8000/jobs/$job | python -c "import sys,json;r=json.load(sys.stdin)['result'];assert r['approved'],r;print('approved memo,',len(r['memo']),'chars')"
+      - if: failure()
+        run: docker logs fs

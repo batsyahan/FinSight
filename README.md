@@ -119,6 +119,32 @@ streamlit run app/streamlit_app.py
 
 It shows live agent progress, the memo, a price chart with the 50/200 SMAs, the evidence behind each citation, and the full agent trace.
 
+## Run as a service
+
+```bash
+pip install -e ".[api]"
+uvicorn finsight.api:app --port 8000          # REST API: interactive docs at http://localhost:8000/docs
+docker compose up --build                     # API :8000 + web UI :8501 + shared Redis cache
+```
+
+| Endpoint | What it does |
+|---|---|
+| `POST /analyze` | Starts an analysis job and returns `202 {job_id}`. `{"ticker": "INFY.NS", "question": "...", "review": true}` |
+| `GET /jobs/{id}` | Status (`queued`/`running`/`awaiting_review`/`done`/`failed`), per-agent progress and the result |
+| `POST /jobs/{id}/review` | Human-in-the-loop over HTTP: `{"action": "approve" \| "revise" \| "edit", ...}` |
+| `POST /portfolio` | Portfolio risk report |
+| `GET /healthz` | Health check and configuration |
+
+Set `FINSIGHT_API_KEY` to require an `X-API-Key` header. Market data is cached (in files, or in Redis when `FINSIGHT_REDIS_URL` is set). CI builds the Docker image and smoke-tests the API inside the container.
+
+### Watchlist alerts
+
+```bash
+finsight watch --file watchlist.txt --data yfinance --webhook https://hooks.slack.com/...
+```
+
+This takes a cheap snapshot of each stock (no LLM calls) and compares it with the previous run. It alerts on new or cleared risk flags, price moves of 5% or more and sentiment swings. `.github/workflows/watchlist.yml` runs it on weekdays after NSE close. Add a `FINSIGHT_WEBHOOK_URL` repository secret to receive the alerts in Slack or Discord.
+
 ## Evaluation and observability
 
 Every LLM call is recorded per agent: tokens, latency and estimated cost. A summary is printed after each run and saved in the trace.

@@ -1,0 +1,22 @@
+# docker compose up --build   ->  API on :8000, web UI on :8501, Redis cache shared by both
+services:
+  api:
+    build: .
+    ports: ["8000:8000"]
+    env_file: [.env]
+    environment:
+      FINSIGHT_REDIS_URL: redis://redis:6379/0
+    depends_on: [redis]
+
+  ui:
+    build: .
+    command: ["streamlit", "run", "app/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    ports: ["8501:8501"]
+    env_file: [.env]
+    environment:
+      FINSIGHT_REDIS_URL: redis://redis:6379/0
+    depends_on: [redis]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]

@@ -254,9 +254,17 @@ class YFinanceProvider:
         return out
 
 
-def get_provider(name: str = "sample") -> MarketDataProvider:
+def get_provider(name: str = "sample", cache: bool | None = None) -> MarketDataProvider:
+    """Real data is cached (file or Redis) unless FINSIGHT_CACHE=off; sample data never needs it."""
+    import os
+
     name = (name or "sample").lower()
     if name == "yfinance":
+        use_cache = cache if cache is not None else os.getenv("FINSIGHT_CACHE", "on").lower() != "off"
+        if use_cache:
+            from finsight.data.cache import CachedProvider
+
+            return CachedProvider(YFinanceProvider())
         return YFinanceProvider()
     if name == "sample":
         return SampleProvider()

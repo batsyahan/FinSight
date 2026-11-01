@@ -1,0 +1,36 @@
+# Daily watchlist alerts after NSE close (16:15 IST = 10:45 UTC), Monday to Friday.
+# Optional repository secret FINSIGHT_WEBHOOK_URL (Slack or Discord) to receive alerts.
+name: Watchlist alerts
+
+on:
+  schedule:
+    - cron: "45 10 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[market]"
+      - name: Restore yesterday's snapshot
+        uses: actions/cache/restore@v4
+        with:
+          path: reports/watch_state.json
+          key: watch-state-${{ github.run_id }}
+          restore-keys: watch-state-
+      - name: Check watchlist
+        env:
+          FINSIGHT_DATA: yfinance
+          FINSIGHT_WEBHOOK_URL: ${{ secrets.FINSIGHT_WEBHOOK_URL }}
+        run: finsight watch --file watchlist.txt --state reports/watch_state.json --out reports
+      - name: Save today's snapshot
+        uses: actions/cache/save@v4
+        with:
+          path: reports/watch_state.json
+          key: watch-state-${{ github.run_id }}
+      - name: Show alerts in the run summary
+        run: cat reports/watchlist.md >> "$GITHUB_STEP_SUMMARY"
