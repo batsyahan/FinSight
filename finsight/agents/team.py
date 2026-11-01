@@ -31,6 +31,7 @@ class Team:
             tools=self.tools.subset(["get_company_profile", "get_fundamentals", "get_news"]),
             state=state,
             max_steps=5,
+            seed=[("get_company_profile", {}), ("get_fundamentals", {}), ("get_news", {"limit": 6})],
         )
         state.findings.extend(findings)
         return state
@@ -45,6 +46,7 @@ class Team:
             tools=self.tools.subset(["get_price_stats", "run_backtest", "compute_ratios"]),
             state=state,
             max_steps=5,
+            seed=[("get_price_stats", {"period": "2y"}), ("run_backtest", {}), ("compute_ratios", {})],
         )
         state.findings.extend(findings)
         return state

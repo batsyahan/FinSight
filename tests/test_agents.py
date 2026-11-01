@@ -214,55 +214,62 @@ def test_verifier_normalises_unicode_dashes():
 
 # --------------------------------------------------------------------------- native tool calling
 class NativeMock(MockLLM):
-    """Speaks the native tool-calling interface and, like gpt-oss, first tries to submit an
-    answer from memory. Finishes via the submit_findings tool."""
+    """Native tool-calling model. Mixes a from-memory claim in with real findings, the way
+    gpt-oss did on INFY.NS. Answers via submit_findings."""
 
     def __init__(self):
-        self.choices = []
+        self.calls = 0
 
     def chat_tools(self, system, messages, tools, *, tool_choice="auto", role="", context=None, max_tokens=1500):
-        from finsight.llm.mock import PLANS
-
-        self.choices.append((role, tool_choice))
-        names = {s["name"] for s in tools}
-        done = {m["name"] for m in messages if m["role"] == "tool" and m["name"] != "submit_findings"}
-        tried_memory = any(m["role"] == "tool" and m["name"] == "submit_findings" for m in messages)
-        if not done and not tried_memory:
-            return {"content": "", "tool_calls": [{"id": "m1", "name": "submit_findings", "args": {
-                "findings": [{"text": "From memory: revenue $19bn.", "citations": []}]}}]}
-        todo = [(n, a) for n, a in PLANS[role] if n not in done]
-        if todo and todo[0][0] in names:
-            n, a = todo[0]
-            return {"content": "", "tool_calls": [{"id": f"call_{n}", "name": n, "args": a}]}
+        self.calls += 1
         f = self._researcher_findings(context) if role == "researcher" else self._quant_findings(context)
+        f = f + [{"text": "From memory: revenue was $19bn.", "citations": []}]
         return {"content": "", "tool_calls": [{"id": "done", "name": "submit_findings", "args": {"findings": f}}]}
 
 
-def test_native_loop_forces_tools_before_answering():
+def test_native_loop_seeds_core_evidence_and_drops_memory_claims():
     llm = NativeMock()
     steps = []
     state = run_analysis("INFY", llm=llm, settings=OFFLINE, engine_name="builtin",
                          on_step=lambda n, s: steps.append((n, len(s.evidence.items))))
-    assert all(choice == "required" for _, choice in llm.choices)
     assert dict(steps)["researcher"] == 3 and dict(steps)["quant"] == 6
+    assert llm.calls == 2  # one LLM call per ReAct agent: cheap on rate-limited free tiers
     assert state.approved and all("From memory" not in f.text for f in state.findings)
-    assert sum(t["event"] == "rejected_final" for t in state.trace) == 2  # once per ReAct agent
+    seeded = [t for t in state.trace if t["event"] == "tool" and t["detail"]["seeded"]]
+    assert len(seeded) == 6
 
 
-def test_native_loop_recovers_from_invented_tool_name():
-    """Groq returns HTTP 400 tool_use_failed when gpt-oss calls a tool like 'JSON'."""
+class TextAnswerMock(MockLLM):
+    """Ignores tools and answers in markdown, like gpt-oss's failed_generation."""
+
+    def chat_tools(self, system, messages, tools, *, tool_choice="auto", role="", context=None, max_tokens=1500):
+        ids = [m["content"].split()[1] for m in messages if m["role"] == "tool"]
+        return {"content": "**Findings**\n\n"
+                           f"1. **Profile** – company profiled from data [{ids[0]}]\n"
+                           f"2. Price and fundamentals reviewed ({ids[1]}, {ids[-1]})\n"
+                           "3. Strong brand loyalty from memory\n", "tool_calls": []}
+
+
+def test_native_loop_accepts_markdown_findings_with_citations():
+    state = run_analysis("INFY", llm=TextAnswerMock(), settings=OFFLINE, engine_name="builtin")
+    texts = [f.text for f in state.findings_for("researcher")]
+    assert texts == ["Profile – company profiled from data.", "Price and fundamentals reviewed."]
+    assert state.findings_for("researcher")[1].citations == ["S2", "S3"]
+
+
+def test_native_loop_salvages_groq_failed_generation():
+    """Groq HTTP 400 tool_use_failed carries the model's text in failed_generation."""
     from finsight.llm.base import LLMError
 
-    class InventsToolOnce(NativeMock):
-        def chat_tools(self, *a, **kw):
-            if not getattr(self, "failed", False):
-                self.failed = True
-                raise LLMError('LLM request failed: HTTP 400: {"error":{"code":"tool_use_failed",'
-                               '"message":"attempted to call tool \'JSON\' which was not in request.tools"}}')
-            return super().chat_tools(*a, **kw)
+    class GroqRejects(MockLLM):
+        def chat_tools(self, system, messages, tools, **kw):
+            body = json.dumps({"error": {"code": "tool_use_failed", "message": "Tool choice is required...",
+                                         "failed_generation": '{"name": "JSON", "arguments": {"findings": ['
+                                                              '{"text": "Data reviewed.", "citations": ["S1"]}]}}'}})
+            raise LLMError("LLM request failed: HTTP 400: tool_use_failed", body=body)
 
-    state = run_analysis("INFY", llm=InventsToolOnce(), settings=OFFLINE, engine_name="builtin")
-    assert state.approved
+    state = run_analysis("INFY", llm=GroqRejects(), settings=OFFLINE, engine_name="builtin")
+    assert [f.text for f in state.findings_for("researcher")] == ["Data reviewed."]
     assert any(t["event"] == "provider_rejected_call" for t in state.trace)
 
 

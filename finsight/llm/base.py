@@ -32,7 +32,9 @@ class LLM(Protocol):
 
 
 class LLMError(RuntimeError):
-    pass
+    def __init__(self, message: str, body: str = "") -> None:
+        super().__init__(message)
+        self.body = body  # full provider response body, when there was one
 
 
 _WAIT_RE = re.compile(r"try again in (?:(\d+)m)?([\d.]+)s", re.IGNORECASE)
@@ -54,7 +56,7 @@ def retry_delay(response: "requests.Response | None", attempt: int) -> float:
 
 
 def post_with_retry(url: str, headers: dict, payload: dict, timeout: int = 120, retries: int = 6) -> dict:
-    last = None
+    last, body = None, ""
     for attempt in range(retries):
         resp = None
         try:
@@ -65,6 +67,7 @@ def post_with_retry(url: str, headers: dict, payload: dict, timeout: int = 120, 
             if resp.status_code == 200:
                 return resp.json()
             last = f"HTTP {resp.status_code}: {resp.text[:300]}"
+            body = resp.text
             if resp.status_code not in (408, 429, 500, 502, 503, 504, 529):
                 break
         if attempt == retries - 1:
@@ -73,7 +76,7 @@ def post_with_retry(url: str, headers: dict, payload: dict, timeout: int = 120, 
         if resp is not None and resp.status_code == 429:
             print(f"  ⏳ rate limited by the LLM provider, waiting {wait:.0f}s...", file=sys.stderr, flush=True)
         time.sleep(wait)
-    raise LLMError(f"LLM request failed: {last}")
+    raise LLMError(f"LLM request failed: {last}", body=body)
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
