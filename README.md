@@ -101,7 +101,22 @@ It shows live agent progress, the memo, a price chart with the 50/200 SMAs, the 
 
 ## Example output
 
-See [`examples/DEMO_memo.md`](examples/DEMO_memo.md) for a memo produced offline (synthetic data, mock model).
+- [`examples/INFY_NS_memo.md`](examples/INFY_NS_memo.md): **live run** on Infosys (NSE) with Groq `openai/gpt-oss-120b` and Yahoo Finance data. The Critic rejected the first draft with 2 issues; the Writer fixed them and the second draft was approved (about 2 minutes on Groq's free tier).
+- [`examples/DEMO_memo.md`](examples/DEMO_memo.md): offline run with synthetic data and the mock model.
+
+## Lessons from live runs
+
+Running on a real model exposed failure modes that the offline tests didn't. Each now has a regression test:
+
+| Seen on `gpt-oss-120b` (Groq) | Fix |
+|---|---|
+| Answered from memory, 0 tool calls | Core tools run first; uncited findings dropped |
+| Called a non-existent `JSON` tool (HTTP 400) | `submit_findings` tool, and the model's text is recovered from `failed_generation` |
+| Wrote text when a tool call was required | Findings accepted as a tool call, JSON or a cited bullet list |
+| Spent its output budget reasoning | `reasoning_effort=low` and a token floor for reasoning models |
+| Free-tier 429 rate limits | Waits for the provider's "try again in Xs" |
+| `52‑week` with a Unicode hyphen failed the checker | Dashes normalised before verification |
+| Mixed "$" and INR for one figure | Separate statement and price currencies; currency check |
 
 ## Tests
 

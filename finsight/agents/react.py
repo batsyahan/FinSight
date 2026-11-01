@@ -1,8 +1,8 @@
 """A small, provider-agnostic ReAct loop with two transports.
 
 * Native: models that expose ``chat_tools`` (Claude, OpenAI-compatible APIs) use the API's
-  own tool calling. The first turn sets ``tool_choice="required"``, so the model cannot
-  answer before gathering evidence.
+  own tool calling. The orchestrator runs each agent's core tools first (``seed``), the model
+  may call more, and it answers through a ``submit_findings`` tool.
 * JSON: other models (the offline mock, plain local models) reply with JSON text, either
       {"thought": "...", "action": "<tool>", "args": {...}}
   or

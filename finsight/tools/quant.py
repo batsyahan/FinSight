@@ -113,6 +113,7 @@ def fundamental_ratios(f: dict[str, Any]) -> dict[str, Any]:
         "debt_to_equity": _r(_div(debt, eq)) if eq and eq > 0 else None,
         "current_ratio": _r(_div(f.get("current_assets"), f.get("current_liabilities"))),
         "pe_ratio": _r(pe),
+        "pe_basis": "trailing (price / trailing EPS)",
         "eps": _r(eps),
     }
 
