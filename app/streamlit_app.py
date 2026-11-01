@@ -153,6 +153,8 @@ with tab_an:
                 d3.download_button("PDF", export(state, "pdf")[0], f"{stem}_memo.pdf")
             except RuntimeError:
                 d3.caption("PDF: `pip install fpdf2`")
+            except Exception as e:  # a PDF problem must never break the page
+                d3.caption(f"PDF unavailable ({type(e).__name__})")
         with t_evid:
             for ev in state.evidence.items.values():
                 with st.expander(f"[{ev.id}] {ev.title}"):
