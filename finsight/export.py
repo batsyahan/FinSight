@@ -110,13 +110,13 @@ def to_pdf(state: AnalysisState) -> bytes:
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    def line(h: float, text: str) -> None:
+    def write(h: float, text: str) -> None:
         # fpdf2 leaves the cursor at the right margin after multi_cell by default; return to the left
         pdf.multi_cell(0, h, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.set_font("Helvetica", size=9)
     pdf.set_text_color(110, 110, 110)
-    line(5, clean(f"FinSight research memo - {'approved' if state.approved else 'not approved'} "
+    write(5, clean(f"FinSight research memo - {'approved' if state.approved else 'not approved'} "
                                f"by the Critic - educational research, not financial advice"))
     pdf.set_text_color(0, 0, 0)
     for raw in state.memo.splitlines():
@@ -132,13 +132,13 @@ def to_pdf(state: AnalysisState) -> bytes:
         else:
             pdf.set_font("Helvetica", size=10)
             text = re.sub(r"^\s*[-*]\s+", "- ", text)
-        line(6 if head else 5, text)
+        write(6 if head else 5, text)
     pdf.ln(4)
     pdf.set_font("Helvetica", "B", 11)
-    line(6, "Evidence")
+    write(6, "Evidence")
     pdf.set_font("Helvetica", size=8)
     for e in state.evidence.items.values():
-        line(4, clean(f"[{e.id}] {e.title} ({e.source})"))
+        write(4, clean(f"[{e.id}] {e.title} ({e.source})"))
     return bytes(pdf.output())
 
 
