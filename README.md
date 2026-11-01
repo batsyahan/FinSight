@@ -13,6 +13,7 @@ Most "AI analyst" demos let an LLM write numbers from memory. FinSight doesn't:
 - **Tools do the maths, agents do the reasoning.** Returns, volatility, Sharpe, drawdown, backtests and ratios come from tested Python functions, never from the model.
 - **Every tool result becomes citable evidence** (`S1`, `S2`, …). The Writer must cite them.
 - **The Critic verifies, not just reviews.** A deterministic checker extracts every figure in the draft and matches it against the evidence (handling rounding, signs and crore/billion scaling). It also rejects unknown citations and numeric sentences with no citation. Then an LLM review covers balance and tone. Rejected drafts go back to the Writer with the exact issues.
+- **Native tool calling, with tools required first.** For Claude and OpenAI-compatible APIs the agents use the API's own tool calling, and the first turn sets `tool_choice=required`. The model cannot answer from memory before it has evidence. Models without tool calling fall back to a JSON ReAct protocol.
 - **Provider-agnostic.** It works with Claude, any OpenAI-compatible API (OpenAI, Groq, Ollama, OpenRouter), or a deterministic offline mode that needs no API key.
 - **Runs on LangGraph** when installed, or on a small built-in state-graph engine with the same node functions.
 

@@ -210,3 +210,81 @@ def test_verifier_normalises_unicode_dashes():
     ev.add("get_price_stats", "stats", {"high_52w": 1654.01, "return_total_pct": -30.83})
     memo = "The 52‑week high was 1654.01 and the 2‑year return was −30.83% [S1]."
     assert verify_memo(memo, ev)["passed"]
+
+
+# --------------------------------------------------------------------------- native tool calling
+class NativeMock(MockLLM):
+    """Speaks the native tool-calling interface. Like gpt-oss, it would happily answer from memory
+    whenever it is *allowed* to (tool_choice != "required"), so the loop must force tools first."""
+
+    def __init__(self):
+        self.choices = []
+
+    def chat_tools(self, system, messages, tools, *, tool_choice="auto", role="", context=None, max_tokens=1500):
+        from finsight.llm.mock import PLANS
+
+        self.choices.append((role, tool_choice))
+        done = {m["name"] for m in messages if m["role"] == "tool"}
+        if tool_choice != "required" and not done:
+            return {"content": json.dumps({"findings": [{"text": "From memory: revenue $19bn.", "citations": []}]}),
+                    "tool_calls": []}
+        todo = [(n, a) for n, a in PLANS[role] if n not in done]
+        if todo and tool_choice != "none":
+            n, a = todo[0]
+            return {"content": "", "tool_calls": [{"id": f"call_{n}", "name": n, "args": a}]}
+        findings = self._researcher_findings(context) if role == "researcher" else self._quant_findings(context)
+        return {"content": json.dumps({"findings": findings}), "tool_calls": []}
+
+
+def test_native_loop_forces_tools_before_answering():
+    llm = NativeMock()
+    steps = []
+    state = run_analysis("INFY", llm=llm, settings=OFFLINE, engine_name="builtin",
+                         on_step=lambda n, s: steps.append((n, len(s.evidence.items))))
+    assert llm.choices[0] == ("researcher", "required")
+    assert dict(steps)["researcher"] == 3 and dict(steps)["quant"] == 6
+    assert state.approved and all("From memory" not in f.text for f in state.findings)
+
+
+def test_openai_chat_tools_round_trip(monkeypatch):
+    import finsight.llm.base as base
+    from finsight.llm.providers import OpenAICompatLLM
+
+    sent = []
+
+    class Resp:
+        status_code, text, headers = 200, "", {}
+
+        def json(self):
+            return {"choices": [{"finish_reason": "tool_calls", "message": {"content": None, "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "get_price_stats", "arguments": '{"period": "1y"}'}}]}}]}
+
+    monkeypatch.setattr(base.requests, "post", lambda url, **kw: sent.append(kw["json"]) or Resp())
+    llm = OpenAICompatLLM("k", "openai/gpt-oss-120b", "https://x/v1")
+    history = [{"role": "user", "content": "go"},
+               {"role": "assistant", "content": "", "tool_calls": [{"id": "c0", "name": "get_news", "args": {}}]},
+               {"role": "tool", "tool_call_id": "c0", "name": "get_news", "content": "Evidence S1 ..."}]
+    schema = build_tools(SampleProvider(), AnalysisState("X")).subset(["get_price_stats"]).schemas()
+    out = llm.chat_tools("sys", history, schema, tool_choice="required")
+    assert out["tool_calls"] == [{"id": "c1", "name": "get_price_stats", "args": {"period": "1y"}}]
+    p = sent[0]
+    assert p["tool_choice"] == "required" and p["tools"][0]["function"]["name"] == "get_price_stats"
+    assert p["messages"][2]["tool_calls"][0]["function"]["arguments"] == "{}"
+    assert p["messages"][3] == {"role": "tool", "tool_call_id": "c0", "content": "Evidence S1 ..."}
+
+
+def test_anthropic_message_conversion_alternates_roles():
+    from finsight.llm.providers import _to_anthropic
+
+    out = _to_anthropic([
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1", "name": "a", "args": {}},
+                                                            {"id": "t2", "name": "b", "args": {"x": 1}}]},
+        {"role": "tool", "tool_call_id": "t1", "name": "a", "content": "r1"},
+        {"role": "tool", "tool_call_id": "t2", "name": "b", "content": "r2"},
+        {"role": "user", "content": "now answer"},
+    ])
+    assert [m["role"] for m in out] == ["user", "assistant", "user"]
+    assert [b["type"] for b in out[2]["content"]] == ["tool_result", "tool_result", "text"]
+    assert out[1]["content"][1] == {"type": "tool_use", "id": "t2", "name": "b", "input": {"x": 1}}

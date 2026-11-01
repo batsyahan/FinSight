@@ -23,6 +23,15 @@ class Tool:
     params: dict[str, str] = field(default_factory=dict)  # name -> description
     title: str = ""
 
+    def schema(self) -> dict[str, Any]:
+        """JSON-schema description used for native (API-level) tool calling."""
+        props = {
+            k: {"type": "integer" if v.lower().startswith("int") else "string", "description": v}
+            for k, v in self.params.items()
+        }
+        return {"name": self.name, "description": self.description,
+                "parameters": {"type": "object", "properties": props, "required": []}}
+
     def signature(self) -> str:
         ps = ", ".join(f"{k}: {v}" for k, v in self.params.items()) or "no arguments"
         return f"- {self.name}({ps}): {self.description}"
@@ -41,6 +50,9 @@ class ToolRegistry:
         for n in names:
             sub.register(self.tools[n])
         return sub
+
+    def schemas(self) -> list[dict[str, Any]]:
+        return [t.schema() for t in self.tools.values()]
 
     def describe(self) -> str:
         return "\n".join(t.signature() for t in self.tools.values())

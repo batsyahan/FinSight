@@ -1,12 +1,15 @@
-"""A small, provider-agnostic ReAct loop.
+"""A small, provider-agnostic ReAct loop with two transports.
 
-The model replies with JSON only, either
-    {"thought": "...", "action": "<tool>", "args": {...}}
-or
-    {"thought": "...", "final": {"findings": [{"text": "...", "citations": ["S1"]}]}}
+* Native: models that expose ``chat_tools`` (Claude, OpenAI-compatible APIs) use the API's
+  own tool calling. The first turn sets ``tool_choice="required"``, so the model cannot
+  answer before gathering evidence.
+* JSON: other models (the offline mock, plain local models) reply with JSON text, either
+      {"thought": "...", "action": "<tool>", "args": {...}}
+  or
+      {"thought": "...", "final": {"findings": [{"text": "...", "citations": ["S1"]}]}}
 
-Using a JSON protocol instead of vendor tool-calling keeps the loop identical across
-Claude, OpenAI-compatible APIs, local models and the offline mock.
+Either way the agent ends with findings that cite evidence ids, and uncited findings
+are dropped.
 """
 
 from __future__ import annotations
@@ -34,6 +37,17 @@ Available tools:
 {tools}"""
 
 
+NATIVE_PROTOCOL = """Use the provided tools to gather evidence. Every tool result is stored as evidence
+with an id like S1 (shown in each tool result). You may call at most {max_steps} tools.
+
+When you have enough information, stop calling tools and reply with ONE JSON object only:
+{{"findings": [{{"text": "one factual finding", "citations": ["S1"]}}]}}
+
+Rules:
+- Only state figures that appear in tool results; never use outside knowledge or memory.
+- Every finding must cite at least one evidence id. Write 3 to 6 concise findings."""
+
+
 def run_react_agent(
     *,
     agent: str,
@@ -44,6 +58,8 @@ def run_react_agent(
     state: AnalysisState,
     max_steps: int = 6,
 ) -> list[Finding]:
+    if hasattr(llm, "chat_tools"):
+        return _run_native(agent, role_prompt, task, llm, tools, state, max_steps)
     system = role_prompt.strip() + "\n\n" + PROTOCOL.format(tools=tools.describe(), max_steps=max_steps)
     messages: list[dict[str, str]] = [{"role": "user", "content": task}]
     state.log(agent, "start", task)
@@ -105,3 +121,60 @@ def _parse_findings(agent: str, final: Any, state: AnalysisState) -> list[Findin
         elif text:
             state.log(agent, "dropped_uncited_finding", text[:150])
     return out
+
+
+def _run_native(agent: str, role_prompt: str, task: str, llm: Any, tools: ToolRegistry,
+                state: AnalysisState, max_steps: int) -> list[Finding]:
+    system = role_prompt.strip() + "\n\n" + NATIVE_PROTOCOL.format(max_steps=max_steps)
+    schemas = tools.schemas()
+    messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
+    state.log(agent, "start", task)
+    calls_made = tool_successes = 0
+    json_retries = 0
+
+    for _ in range(max_steps + 4):
+        budget_left = calls_made < max_steps
+        choice = "required" if tool_successes == 0 and budget_left else ("auto" if budget_left else "none")
+        if not budget_left and messages[-1]["role"] == "tool":
+            messages.append({"role": "user", "content": "Tool budget used up. Reply now with the findings JSON."})
+        resp = llm.chat_tools(system, messages, schemas, tool_choice=choice, role=agent, context=state)
+        calls = resp.get("tool_calls") or []
+        content = resp.get("content") or ""
+
+        if calls and budget_left:
+            messages.append({"role": "assistant", "content": content, "tool_calls": calls})
+            if content.strip():
+                state.log(agent, "thought", content[:300])
+            for c in calls:
+                calls_made += 1
+                result = tools.call(c["name"], c.get("args") or {})
+                state.log(agent, "tool", {"tool": c["name"], "args": c.get("args"),
+                                          "result": result.get("evidence_id") or result.get("error")})
+                if "error" in result:
+                    obs = f"Tool {c['name']} failed: {result['error']}"
+                else:
+                    tool_successes += 1
+                    obs = f"Evidence {result['evidence_id']} from {c['name']}: {to_json(result['data'])}"
+                messages.append({"role": "tool", "tool_call_id": c["id"], "name": c["name"], "content": obs})
+            continue
+
+        messages.append({"role": "assistant", "content": content})
+        if tool_successes == 0 and budget_left:
+            state.log(agent, "rejected_final", "no tool evidence yet")
+            messages.append({"role": "user", "content": "Call a tool first; you have no evidence yet."})
+            continue
+        try:
+            obj = extract_json(content)
+        except ValueError:
+            state.log(agent, "parse_error", content[:200])
+            json_retries += 1
+            if json_retries > 2:
+                break
+            messages.append({"role": "user", "content": 'Reply with the findings as ONE JSON object: {"findings": [...]}'})
+            continue
+        findings = _parse_findings(agent, obj.get("final", obj), state)
+        state.log(agent, "final", [f.text for f in findings])
+        return findings
+
+    state.errors.append(f"{agent}: did not produce a final answer")
+    return []
